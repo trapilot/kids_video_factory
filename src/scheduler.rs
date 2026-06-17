@@ -67,7 +67,7 @@ pub async fn run_scheduler(
                 let _ = db.save_topic(state.target_age.clone(), &state.target_topic).await;
  
                 println!("✅ OK: {}, Updated into long-term memory", artifact.title);
-                sleep(Duration::from_mins(5)).await;
+                sleep(Duration::from_mins(10)).await;
             }
 
             Err(e) => {

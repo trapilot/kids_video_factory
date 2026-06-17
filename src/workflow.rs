@@ -4,7 +4,7 @@ use std::collections::HashSet;
 
 use crate::enums::*;
 use crate::models::*;
-use crate::render::*;
+use crate::renderer::*;
 use crate::helper::*;
 use crate::db::DbManager;
 use crate::uploader;
@@ -97,7 +97,7 @@ pub async fn run_agent_workflow(
                             .unwrap_or_else(|| history_list.join(", "))
                     );
                     
-                    let resp = generate_content(client, system, &user, true).await?;
+                    let resp = build_content(client, system, &user, true).await?;
                     let parsed: Value = serde_json::from_str(&resp).map_err(|e| ctx("JSON parse", e))?;
                     
                     state.target_topic = parsed["topic"].as_str().unwrap().to_string();
@@ -117,6 +117,7 @@ pub async fn run_agent_workflow(
                     
                     state.current_node = AgentNode::Writer;
                 }
+
                 AgentNode::Writer => {
                     println!("✍️ [Writer] Generating final video artifact...");
                     
@@ -213,6 +214,8 @@ pub async fn run_agent_workflow(
                                 {{
                                 "scene_id": 1,
                                 "duration": 5,
+                                "transition": "...",
+                                "motion": "...",
                                 "visual_prompt": "...",
                                 "voice_segments": [
                                     {{
@@ -260,7 +263,7 @@ pub async fn run_agent_workflow(
                         all_chars
                     );
 
-                    let resp = generate_content(client, &system, &user, true).await?;
+                    let resp = build_content(client, &system, &user, true).await?;
 
                     let artifact: VideoArtifact = serde_json::from_str(&resp)
                         .map_err(|e| ctx("JSON parse", e))?;
@@ -268,33 +271,36 @@ pub async fn run_agent_workflow(
                     state.final_json = Some(artifact);
                     state.current_node = AgentNode::Builder;
                 }
+
                 AgentNode::Builder => {
                     println!("🔧[Builder] Generating assets...");
                     let artifact = state.final_json.as_ref().unwrap();
 
-                    let scenes = generate_scene(
+                    let timelines = build_timelines(
                         &client,
                         state.target_path.clone(),
                         artifact.scenes.clone(),
                         VoiceMode::SingleVoice,
                     ).await?;
 
-                    state.scene_assets = scenes;
+                    state.video_timelines = timelines;
                     state.current_node = AgentNode::Renderer;
                 }
+
                 AgentNode::Renderer => {
                     println!("🎥 [Renderer] Rendering video...");
                     
-                    let video = ffmpeg_render(
+                    let final_video = ffmpeg_render(
                         state.target_path.clone(),
-                        &state.scene_assets,
+                        &state.video_timelines,
                     ).await?;
 
-                    state.video_path = video;
+                    state.video_path = final_video;
                     state.current_node = AgentNode::Publisher;
                 }
+
                 AgentNode::Publisher => {
-                    println!("📤 [Publisher] Publishing video...");
+                    println!("📤 [Publisher] Publishing the video...");
                     
                     let (yt_res, tt_res) = tokio::join!(
                         uploader::upload_to_youtube(&client, &state.video_path, &state.target_topic),
@@ -321,6 +327,7 @@ pub async fn run_agent_workflow(
                     
                     state.current_node = AgentNode::End;
                 }
+
                 AgentNode::End => {
                     return Ok(state.final_json.clone().unwrap());
                 }

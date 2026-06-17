@@ -2,6 +2,7 @@ use uuid::Uuid;
 use serde::{Deserialize, Serialize};
 
 use crate::helper::*;
+use crate::enums::*;
 
 #[derive(Debug, Clone)]
 pub struct Character {
@@ -169,10 +170,10 @@ pub struct VideoState {
     pub concept_ideas: Vec<String>,
     pub draft_script: String,
     pub final_json: Option<VideoArtifact>,
-    pub scene_assets: Vec<SceneAsset>,
-    pub current_node: AgentNode,
-    pub session_id: String,
     pub video_path: String,
+    pub video_timelines: Vec<VideoTimeline>,
+    pub session_id: String,
+    pub current_node: AgentNode,
     pub meta: WorkflowMeta,
 
     // 👇 add tracking flags
@@ -202,8 +203,8 @@ impl VideoState {
             supporting_characters: vec![],
             concept_ideas: vec![],
             draft_script: "".into(),
-            scene_assets: vec![],
             final_json: None,
+            video_timelines: vec![],
             video_path: "".into(),
             youtube_uploaded: false,
             tiktok_uploaded: false,
@@ -229,12 +230,12 @@ impl VideoState {
         self
     }
 
-    pub fn revert(&mut self) -> &Self {
-        if let Some(prev) = self.current_node.back() {
-            self.current_node = prev;
-        }
-        self
-    }
+    // pub fn revert(&mut self) -> &Self {
+    //     if let Some(prev) = self.current_node.back() {
+    //         self.current_node = prev;
+    //     }
+    //     self
+    // }
 
     pub fn retry(&mut self, e: String) -> &Self {
         self.meta.updated_at = now_rfc();
@@ -256,21 +257,21 @@ impl VideoState {
         self.meta.status = "cancelled".into();
         self
     }
-    
-    pub fn failed(&mut self, e: String) -> &Self {
-        self.meta.updated_at = now_rfc();
-        self.meta.last_error = Some(e.clone());
-        self.meta.status = "failed".into();
-        self
-    }
+}
 
-    // pub fn reset_meta(&mut self) {
-    //     self.meta.status = "running".into();
-    //     self.meta.retry_count = 0;
-    //     self.meta.backoff_ms = 1000;
-    //     self.meta.last_error = None;
-    //     self.meta.updated_at = now_rfc();
-    // }
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct VideoTimeline {
+    pub scene_id: u8,
+
+    pub audio_path: String,
+    pub visual_path: String,
+
+    pub start_time: f64,
+    pub end_time: f64,
+    pub duration: f64,
+
+    pub transition: String,
+    pub motion: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -286,59 +287,11 @@ pub struct VoiceSegment {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct SceneAsset {
-    pub scene_id: u8,
-    pub audio_path: String,
-    pub visual_path: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Scene {
     pub scene_id: u8,
     pub duration: u8,
+    pub motion: String,
+    pub transition: String,
     pub visual_prompt: String,
-    pub voice_segments: Vec<VoiceSegment>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum AgentNode {
-    Planner,
-    Writer,
-    Builder,
-    Renderer,
-    Publisher,
-    End,
-}
-impl AgentNode {
-    pub fn back(&self) -> Option<Self> {
-        use AgentNode::*;
-
-        match self {
-            Planner => None,
-            Writer => Some(Planner),
-            Builder => Some(Writer),
-            Renderer => Some(Builder),
-            Publisher => Some(Renderer),
-            End => Some(Publisher),
-        }
-    }
-}
-impl Default for AgentNode {
-    fn default() -> Self {
-        AgentNode::Planner
-    }
-}
-impl std::fmt::Display for AgentNode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let s = match self {
-            AgentNode::Planner => "planner",
-            AgentNode::Writer => "writer",
-            AgentNode::Builder => "builder",
-            AgentNode::Renderer => "renderer",
-            AgentNode::Publisher => "publisher",
-            AgentNode::End => "end",
-        };
-
-        write!(f, "{}", s)
-    }
+    pub voice_segments: Vec<VoiceSegment>
 }

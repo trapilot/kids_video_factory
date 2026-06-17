@@ -65,13 +65,6 @@ pub fn detect_media(bytes: &[u8]) -> Option<MediaType> {
     None
 }
 
-pub fn is_retryable_error(msg: &str) -> bool {
-    msg.contains("503")
-        || msg.contains("UNAVAILABLE")
-        || msg.contains("429")
-        || msg.contains("rate")
-}
-
 pub fn is_png(bytes: &[u8]) -> bool {
     bytes.starts_with(&[0x89, b'P', b'N', b'G'])
 }

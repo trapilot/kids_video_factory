@@ -60,6 +60,8 @@ Generate a short-form script suitable for YouTube Shorts and TikTok.
     {
       "scene_id": 1,
       "duration": 5,
+      "transition": "...",
+      "motion": "...",
       "visual_prompt": "...",
       "voice_segments": [
         {

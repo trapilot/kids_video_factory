@@ -87,6 +87,7 @@ pub async fn generate_image(
 pub async fn generate_tts(
     client: &Client,
     text: &str,
+    speaker: Option<&str>,
 ) -> Result<Vec<u8>, String> {
     let api_key = get_hf_api_key()?;
 

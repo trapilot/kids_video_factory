@@ -1,4 +1,4 @@
-use reqwest::{Client, multipart, header};
+use reqwest::{Client, header};
 use serde_json::{json, Value};
 use std::env;
 
