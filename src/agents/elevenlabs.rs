@@ -1,0 +1,49 @@
+use std::env;
+use reqwest::Client;
+use serde_json::json;
+
+use crate::models::BASE_VOICE;
+
+pub async fn generate_tts(
+    client: &Client,
+    text: &str,
+    speaker: Option<&str>,
+) -> Result<Vec<u8>, String> {
+    let api_key = env::var("ELEVENLABS_API_KEY")
+        .map_err(|_| "Missing ELEVENLABS_API_KEY")?;
+
+    let speaker = speaker.unwrap_or(BASE_VOICE);
+    
+    let url = format!(
+        "https://api.elevenlabs.io/v1/text-to-speech/{}",
+        speaker
+    );
+
+    let payload = json!({
+        "text": text,
+        "model_id": "eleven_multilingual_v2",
+        "voice_settings": {
+            "stability": 0.5,
+            "similarity_boost": 0.75
+        }
+    });
+
+    let res = client
+        .post(&url)
+        .header("xi-api-key", api_key)
+        .header("Accept", "audio/mpeg")
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if !res.status().is_success() {
+        let err = res.text().await.unwrap_or_default();
+        return Err(format!("ElevenLabs error: {}", err));
+    }
+
+    res.bytes()
+        .await
+        .map(|b| b.to_vec())
+        .map_err(|e| e.to_string())
+}
