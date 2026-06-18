@@ -1,11 +1,9 @@
 use uuid::Uuid;
 use serde::{Deserialize, Serialize};
 
+use crate::config::CONFIG;
 use crate::helper::*;
 use crate::enums::*;
-
-// w2KTJ6MO4SIK6nWK4YH8 pNInz6obpgDQGcFmaJgB
-pub const BASE_VOICE: &str = "pNInz6obpgDQGcFmaJgB";
 
 #[derive(Debug, Clone)]
 pub struct Character {
@@ -43,7 +41,7 @@ pub const EDU_CHARACTERS: &[Character] = &[
 
         name: "Quốc Khánh",
         nickname: "Bin",
-        voice_id: BASE_VOICE, // Adam
+        voice_id: &CONFIG.voice.base_voice,
         birth_year: 2020,
 
         role: "Protagonist",
@@ -71,7 +69,7 @@ pub const EDU_CHARACTERS: &[Character] = &[
 
         name: "Hoàng Yến",
         nickname: "Yến",
-        voice_id: BASE_VOICE, // Bella
+        voice_id: &CONFIG.voice.base_voice, // Bella
         birth_year: 2020,
 
         role: "Best Friend",
@@ -99,7 +97,7 @@ pub const EDU_CHARACTERS: &[Character] = &[
 
         name: "Nam",
         nickname: "Ba Nam",
-        voice_id: BASE_VOICE,
+        voice_id: &CONFIG.voice.base_voice,
         birth_year: 1990,
 
         role: "Father",
@@ -127,7 +125,7 @@ pub const EDU_CHARACTERS: &[Character] = &[
 
         name: "Diễm Sương",
         nickname: "Mẹ Sương",
-        voice_id: BASE_VOICE,
+        voice_id: &CONFIG.voice.base_voice,
         birth_year: 1993,
 
         role: "Mother",

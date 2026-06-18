@@ -4,6 +4,7 @@ use std::sync::Arc;
 use reqwest::Client;
 
 use crate::api::*;
+use crate::config::CONFIG;
 use crate::enums::*;
 use crate::helper::*;
 use crate::models::*;
@@ -269,7 +270,7 @@ async fn generate_scene_audio(
                 let audio = elevenlabs::generate_tts(
                     &client,
                     &segment.text,
-                    segment.voice_id.as_deref().unwrap_or(BASE_VOICE),
+                    segment.voice_id.as_deref().unwrap_or(CONFIG.voice.base_voice),
                 )
                 .await?;
 
@@ -296,7 +297,7 @@ async fn generate_scene_audio(
             let audio = elevenlabs::generate_tts(
                 &client,
                 &text,
-                &voice_segments.first().unwrap().voice_id.as_deref().unwrap_or(BASE_VOICE),
+                &voice_segments.first().unwrap().voice_id.as_deref().unwrap_or(CONFIG.voice.base_voice),
             )
             .await?;
 

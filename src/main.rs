@@ -1,6 +1,7 @@
 mod db;
 mod api;
 mod enums;
+mod config;
 mod models;
 mod helper;
 mod workflow;

@@ -2,6 +2,8 @@ use std::env;
 use reqwest::Client;
 use serde_json::json;
 
+use crate::config::CONFIG;
+
 pub async fn generate_tts(
     client: &Client,
     text: &str,
@@ -19,8 +21,9 @@ pub async fn generate_tts(
         "text": text,
         "model_id": "eleven_multilingual_v2",
         "voice_settings": {
-            "stability": 0.5,
-            "similarity_boost": 0.75
+            "speed": &CONFIG.tts.speed,
+            "stability": &CONFIG.tts.stability,
+            "similarity_boost": &CONFIG.tts.similarity_boost,
         }
     });
 

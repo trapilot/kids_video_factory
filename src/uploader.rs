@@ -2,6 +2,8 @@ use reqwest::{Client, header};
 use serde_json::{json, Value};
 use std::env;
 
+use crate::config::CONFIG;
+
 pub async fn upload_to_youtube(client: &Client, video_path: &str, title: &str) -> Result<(), String> {
     let client_id = env::var("YOUTUBE_CLIENT_ID").map_err(|e| e.to_string())?;
     let client_secret = env::var("YOUTUBE_CLIENT_SECRET").map_err(|e| e.to_string())?;
@@ -34,7 +36,9 @@ pub async fn upload_to_youtube(client: &Client, video_path: &str, title: &str) -
     let metadata = json!({
         "snippet": {
             "title": title,
-            "categoryId": "27"
+            "description": &CONFIG.movie.default_description,
+            "tags": &CONFIG.movie.default_tags,
+            "categoryId": &CONFIG.movie.youtube_category,
         },
         "status": {
             "privacyStatus": "public",

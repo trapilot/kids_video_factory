@@ -2,6 +2,7 @@ use reqwest::Client;
 use serde_json::Value;
 use std::collections::HashSet;
 
+use crate::config::CONFIG;
 use crate::enums::*;
 use crate::models::*;
 use crate::renderer::*;
@@ -60,17 +61,17 @@ pub async fn run_agent_workflow(
                         .unwrap_or_default();
 
 
-                    let system = r#"
+                    let system = format!(r#"
                         You are the Content Director for a children's animated series.
                         Returns JSON:
-                        {
+                        {{
                             "topic": "...",
                             "main_character": "...",
                             "spotlight_characters": ["...", "..."],
                             "supporting_characters": ["...", "..."]
-                        }
+                        }}
                         Rules:
-                        1. Use only Vietnamese.
+                        1. Use only {}.
                         2. Main Character must come from Spotlight Characters.
                         3. Spotlight characters must come from Spotlight Characters, depending on what suits the story.
                         3. Supporting characters must come from Relation Characters, depending on what suits the story.
@@ -78,7 +79,9 @@ pub async fn run_agent_workflow(
                         5. Theme must fit the main character.
                         6. Suitable for children aged in Spotlight Characters.
                         7. Avoid repeating previous topics.
-                        "#;
+                        "#,
+                        CONFIG.movie.language,
+                    );
 
                     let user = format!(r#"
                         SPOTLIGHT CHARACTERS:
@@ -103,7 +106,7 @@ pub async fn run_agent_workflow(
                             .unwrap_or_else(|| history_list.join(", "))
                     );
                     
-                    let resp = build_content(client, system, &user, true).await?;
+                    let resp = build_content(client, &system, &user, true).await?;
                     let parsed: Value = serde_json::from_str(&resp).map_err(|e| ctx("JSON parse", e))?;
                     
                     state.target_topic = parsed["topic"].as_str().unwrap().to_string();
@@ -231,7 +234,7 @@ pub async fn run_agent_workflow(
                         - Important reveal -> CircleOpen
 
                         Rules:
-                        1. Entire content must be Vietnamese.
+                        1. Entire content must be {}.
                         2. Suitable for Main Character age.
                         3. Video length: 45-60 seconds.
                         4. Story must have 3-5 scenes.
@@ -240,7 +243,7 @@ pub async fn run_agent_workflow(
                         7. Main character must drive the story.
                         8. Visual prompts must be kid-friendly.
                         9. No Chinese elements.
-                        10. Use Vietnamese context only.
+                        10. Use {} context only.
                         11. Never invent new motion names.
                         12. Never invent new transition names.
 
@@ -270,6 +273,8 @@ pub async fn run_agent_workflow(
                         supporting_chars,
                         scene_motions,
                         scene_transitions,
+                        CONFIG.movie.language,
+                        CONFIG.movie.language,
                     );
 
                     let user = format!(r#"
@@ -314,7 +319,7 @@ pub async fn run_agent_workflow(
                                 .iter()
                                 .find(|c| c.name == segment.speaker)
                                 .map(|c| c.voice_id.to_string())
-                                .unwrap_or_else(|| BASE_VOICE.to_string())
+                                .unwrap_or(CONFIG.voice.base_voice.to_string())
                             );
                         }
                     }
