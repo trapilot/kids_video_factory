@@ -1,13 +1,12 @@
-use reqwest::Client;
 use std::path::Path;
+use std::str::FromStr;
 use std::sync::Arc;
-use tokio::process::Command;
-use tokio::sync::Semaphore;
+use reqwest::Client;
 
+use crate::api::*;
 use crate::enums::*;
 use crate::helper::*;
-use crate::apis::*;
-use crate::models::{Scene, VideoTimeline, VoiceSegment};
+use crate::models::*;
 
 pub async fn build_content(client: &Client, system: &str, user: &str, is_json: bool) -> Result<String, String> {
     gemini::generate_script(client, system, user, is_json).await
@@ -26,7 +25,7 @@ pub async fn build_timelines(client: &Client, target_path: String, scenes: Vec<S
         .map_err(|e| e.to_string())?;
 
     let mut handles = Vec::new();
-    let tts_semaphore = Arc::new(Semaphore::new(2)); // ElevenLabs free max 2 concurrent
+    let tts_semaphore = Arc::new(tokio::sync::Semaphore::new(2)); // ElevenLabs free max 2 concurrent
 
     for scene in scenes {
         let client = client.clone();
@@ -111,64 +110,130 @@ pub async fn build_timelines(client: &Client, target_path: String, scenes: Vec<S
 }
 
 pub async fn ffmpeg_render(target_path: String, timelines: &Vec<VideoTimeline>) -> Result<String, String> {
+    if !ffmpeg_check() {
+        return Err("ffmpeg not found in PATH. Please install ffmpeg or set PATH correctly.".to_string());
+    }
+    
+    let final_path = format!("{}/final_video.mp4", &target_path);
+    let final_stream = format!("[v{}]", timelines.len() - 1);
+    
+    if tokio::fs::try_exists(&final_path).await.unwrap_or(false) {
+        println!("🎬 FFmpeg already rendered");
+        return Ok(final_path.to_string());
+    }
+
     let mut video_paths = vec![];
     
     for timeline in timelines {
         let video_path = format!("{}/videos/scene_{}.mp4", target_path, timeline.scene_id);
 
         // check file exists
-        if !tokio::fs::try_exists(&video_path).await.unwrap_or(false) {
-            render_scene_video(&timeline, &video_path).await?;
+        if tokio::fs::try_exists(&video_path).await.unwrap_or(false) {
+            println!("🎬 [FFmpeg] Scene {} already rendered", timeline.scene_id);
+        } else {
+            println!("🎬 [FFmpeg] Starting render scene {}", timeline.scene_id);
+
+            // Check input files
+            if tokio::fs::try_exists(&timeline.visual_path).await.unwrap_or(false) {
+                return Err(format!("Missing visual file: {}", timeline.visual_path));
+            }
+
+            if tokio::fs::try_exists(&timeline.audio_path).await.unwrap_or(false) {
+                return Err(format!("Missing audio file: {}", timeline.audio_path));
+            }
+
+            // Create output directory
+            if let Some(parent) = Path::new(&video_path).parent() {
+                tokio::fs::create_dir_all(parent)
+                    .await
+                    .map_err(|e| format!("Failed to create output dir: {}", e))?;
+            }
+
+            // Run ffmpeg
+            let mut cmd = tokio::process::Command::new("ffmpeg");
+            let duration = timeline.duration.to_string();
+
+            cmd.args([
+                "-y",
+                "-loop", "1",
+                "-i", &timeline.visual_path,
+                "-i", &timeline.audio_path,
+                "-t", &duration,
+            ]);
+            if let Ok(motion) = Motion::from_str(&timeline.motion) {
+                if let Some(filter) = motion.ffmpeg_filter(timeline.duration) {
+                    cmd.args([
+                        "-vf", &filter,
+                    ]);
+                }
+            }
+            cmd.args([
+                "-shortest",
+                "-c:v", "libx264",
+                "-pix_fmt", "yuv420p",
+                &video_path,
+            ]);
+
+            let output = cmd
+                .output()
+                .await
+                .map_err(|e| e.to_string())?;
+            
+            if !output.status.success() {
+                return Err(format!(
+                    "FFmpeg failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                ));
+            }
         }
 
         video_paths.push(video_path);
     }
-
-    let list_path = format!("{}/list.txt", &target_path);
-    let final_path = format!("{}/final_video.mp4", &target_path);
     
-    if !tokio::fs::try_exists(&final_path).await.unwrap_or(false) {
-        println!("🎬 FFmpeg rendering: {}", final_path);
-        
-        tokio::fs::write(
-            &list_path,
-            video_paths
-                .iter()
-                .map(|v| {
-                    let path = Path::new(v)
-                        .strip_prefix(&target_path)
-                        .unwrap_or(Path::new(v));
+    println!("🎬 [FFmpeg] Rendering the final: {}", final_path);
+    let mut filter_parts = Vec::new();
+    let mut offset = timelines[0].duration - Transition::DURATION;
+    for i in 1..timelines.len() {
+        let transition =Transition::from_str(&timelines[i - 1].transition)
+                .unwrap_or(Transition::DEFAULT);
 
-                    format!("file './{}'\n", path.display())
-                })
-                .collect::<String>()
-            )
-            .await
-            .map_err(|e| e.to_string())?;
-        
-        let status = tokio::process::Command::new("ffmpeg")
-            .args([
-                "-y",
-                "-f",
-                "concat",
-                "-safe",
-                "0",
-                "-i",
-                &list_path,
-                "-c",
-                "copy",
-                &final_path,
-            ])
-            .status()
-            .await
-            .map_err(|e| e.to_string())?;
-        
-        if !status.success() {
-            return Err(format!("FFmpeg failed with status: {}", status));
+        if i == 1 {
+            filter_parts.push(format!(
+                "[0:v][1:v]xfade=transition={}:duration={}:offset={}[v1]",
+                transition.ffmpeg_name(),
+                Transition::DURATION,
+                offset
+            ));
+        } else {
+            filter_parts.push(format!(
+                "[v{}][{}:v]xfade=transition={}:duration={}:offset={}[v{}]",
+                i - 1,
+                i,
+                transition.ffmpeg_name(),
+                Transition::DURATION,
+                offset,
+                i
+            ));
         }
+
+        offset += timelines[i].duration - Transition::DURATION;
     }
+
+    let mut cmd = tokio::process::Command::new("ffmpeg");
+    cmd.arg("-y");
+    for video_path in &video_paths {
+        cmd.args(["-i", video_path]);
+    }
+    cmd.args([
+        "-filter_complex", &filter_parts.join(";"),
+    ]);
+    cmd.args([
+        "-map", &final_stream,
+        "-c:v", "libx264",
+        &final_path,
+    ]);
     
-    println!("🎬 FFmpeg rendered successfully");
+    println!("🎬 [FFmpeg] Rendered successfully");
     Ok(final_path.to_string())
 }
 
@@ -204,7 +269,7 @@ async fn generate_scene_audio(
                 let audio = elevenlabs::generate_tts(
                     &client,
                     &segment.text,
-                    Some(&segment.speaker),
+                    segment.voice_id.as_deref().unwrap_or(BASE_VOICE),
                 )
                 .await?;
 
@@ -231,7 +296,7 @@ async fn generate_scene_audio(
             let audio = elevenlabs::generate_tts(
                 &client,
                 &text,
-                None,
+                &voice_segments.first().unwrap().voice_id.as_deref().unwrap_or(BASE_VOICE),
             )
             .await?;
 
@@ -256,7 +321,7 @@ async fn generate_scene_audio(
             .await
             .map_err(|e| e.to_string())?;
 
-        let status = Command::new("ffmpeg")
+        let status = tokio::process::Command::new("ffmpeg")
             .args([
                 "-y",
                 "-f",
@@ -281,68 +346,15 @@ async fn generate_scene_audio(
     Ok(())
 }
 
-async fn render_scene_video(timeline: &VideoTimeline, output_path: &str) -> Result<(), String> {
-    println!("🎬 [FFmpeg] Render scene starting");
-
-    let visual_path = timeline.visual_path.clone();
-    let audio_path = timeline.audio_path.clone();
-
-    // 1. Check ffmpeg exists
-    let ffmpeg_check = Command::new("ffmpeg")
+fn ffmpeg_check() -> bool {
+    std::process::Command::new("ffmpeg")
         .arg("-version")
         .output()
-        .await;
-
-    if ffmpeg_check.is_err() {
-        return Err("ffmpeg not found in PATH. Please install ffmpeg or set PATH correctly.".to_string());
-    }
-
-    // 2. Check input files
-    if !Path::new(&visual_path).exists() {
-        return Err(format!("Missing visual file: {}", visual_path));
-    }
-
-    if !Path::new(&audio_path).exists() {
-        return Err(format!("Missing audio file: {}", audio_path));
-    }
-
-    // 3. Create output directory
-    if let Some(parent) = Path::new(output_path).parent() {
-        tokio::fs::create_dir_all(parent)
-            .await
-            .map_err(|e| format!("Failed to create output dir: {}", e))?;
-    }
-
-    // 4. Run ffmpeg
-    let duration = timeline.duration.to_string();
-    let status = Command::new("ffmpeg")
-        .args([
-            "-y",
-            "-loop", "1",
-            "-i", &visual_path,
-            "-i", &audio_path,
-            "-t", &duration,
-            "-shortest",
-            "-c:v", "libx264",
-            "-pix_fmt", "yuv420p",
-            output_path,
-        ])
-        .status()
-        .await
-        .map_err(|e| format!("Failed to execute ffmpeg: {}", e))?;
-
-    if !status.success() {
-        return Err(format!("ffmpeg failed with status: {}", status));
-    }
-
-    println!("✅ Scene rendered successfully: {}", output_path);
-
-    Ok(())
+        .is_ok()
 }
 
-
 async fn get_audio_duration(path: &str) -> anyhow::Result<f64> {
-    let output = Command::new("ffprobe")
+    let output = tokio::process::Command::new("ffprobe")
         .args([
             "-v",
             "error",

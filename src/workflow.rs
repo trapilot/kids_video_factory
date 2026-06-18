@@ -15,7 +15,13 @@ pub async fn run_agent_workflow(
     db: &DbManager,
     state: &mut VideoState
 ) -> Result<VideoArtifact, String> {
-        println!("▶️ Run workflow | node: {:?} | retry: {}", state.current_node, state.meta.retry_count);
+        println!(
+            "▶️ Run workflow | node: {:?} | retry: {} | topic: {}",
+            state.current_node,
+            state.meta.retry_count,
+            state.target_topic,
+        );
+
         loop {
             match state.current_node {
                 AgentNode::Planner => {
@@ -64,14 +70,14 @@ pub async fn run_agent_workflow(
                             "supporting_characters": ["...", "..."]
                         }
                         Rules:
-                            1. Use only Vietnamese.
-                            2. Main Character must come from Spotlight Characters.
-                            3. Spotlight characters must come from Spotlight Characters, depending on what suits the story.
-                            3. Supporting characters must come from Relation Characters, depending on what suits the story.
-                            4. Only the characters provided may be used.
-                            5. Theme must fit the main character.
-                            6. Suitable for children aged in Spotlight Characters.
-                            7. Avoid repeating previous topics.
+                        1. Use only Vietnamese.
+                        2. Main Character must come from Spotlight Characters.
+                        3. Spotlight characters must come from Spotlight Characters, depending on what suits the story.
+                        3. Supporting characters must come from Relation Characters, depending on what suits the story.
+                        4. Only the characters provided may be used.
+                        5. Theme must fit the main character.
+                        6. Suitable for children aged in Spotlight Characters.
+                        7. Avoid repeating previous topics.
                         "#;
 
                     let user = format!(r#"
@@ -85,10 +91,10 @@ pub async fn run_agent_workflow(
                         {}
 
                         Tasks:
-                            1. Choose a spotlight character.
-                            2. Create a fresh educational topic.
-                            3. Select spotlight and supporting characters if needed.
-                            4. Returns JSON in the correct format.
+                        1. Choose a spotlight character.
+                        2. Create a fresh educational topic.
+                        3. Select spotlight and supporting characters if needed.
+                        4. Returns JSON in the correct format.
                         "#,
                         spotlight_chars,
                         relation_chars,
@@ -126,8 +132,7 @@ pub async fn run_agent_workflow(
                         .find(|c| c.name == state.main_character)
                         .unwrap();
 
-                    let spotlight_set: HashSet<&str> = state
-                        .spotlight_characters
+                    let spotlight_set: HashSet<&str> = state.spotlight_characters
                         .iter()
                         .map(|s| s.as_str())
                         .collect();
@@ -147,8 +152,7 @@ pub async fn run_agent_workflow(
                         .collect::<Vec<_>>()
                         .join("\n");
 
-                    let supporting_set: HashSet<&str> = state
-                        .supporting_characters
+                    let supporting_set: HashSet<&str> = state.supporting_characters
                         .iter()
                         .map(|s| s.as_str())
                         .collect();
@@ -179,11 +183,26 @@ pub async fn run_agent_workflow(
                         })
                         .collect::<Vec<_>>()
                         .join("\n");
+                    
+                    let scene_motions = Motion::ALL
+                        .iter()
+                        .map(|m| format!("- {}", m))
+                        .collect::<Vec<_>>()
+                        .join("\n");
+
+                    let scene_transitions = Transition::ALL
+                        .iter()
+                        .map(|m| format!("- {}", m))
+                        .collect::<Vec<_>>()
+                        .join("\n");
 
                     let system = format!(r#"
                         You are a senior children's animation writer, create the FINAL JSON artifact.
 
                         MAIN CHARACTER:
+                        {}
+
+                        VISUAL STYLE PREFIX:
                         {}
 
                         SPOTLIGHT CHARACTERS:
@@ -192,45 +211,65 @@ pub async fn run_agent_workflow(
                         SUPPORTING CHARACTERS:
                         {}
 
-                        VISUAL STYLE PREFIX:
+                        MOTION MUST BE ONE OF:
                         {}
 
+                        TRANSITION MUST BE ONE OF:
+                        {}
+
+                        Motion guidelines:
+                        - Dialogue scene -> ZoomIn
+                        - Walking scene -> PanLeft or PanRight
+                        - Landscape scene -> KenBurns
+                        - Emotional moment -> ZoomIn
+                        - Ending scene -> ZoomOut
+
+                        Transition guidelines:
+                        - Same location -> Fade
+                        - New location -> SlideLeft
+                        - Time skip -> FadeBlack
+                        - Important reveal -> CircleOpen
+
                         Rules:
-                            1. Entire content must be Vietnamese.
-                            2. Suitable for Main Character age.
-                            3. Video length: 30-45 seconds.
-                            4. Story must have 3-5 scenes.
-                            5. Every scene must contain dialogue.
-                            6. Use only provided characters.
-                            7. Main character must drive the story.
-                            8. Visual prompts must be kid-friendly.
-                            9. No Chinese elements.
-                            10. Use Vietnamese context only.
+                        1. Entire content must be Vietnamese.
+                        2. Suitable for Main Character age.
+                        3. Video length: 45-60 seconds.
+                        4. Story must have 3-5 scenes.
+                        5. Every scene must contain dialogue.
+                        6. Use only provided characters.
+                        7. Main character must drive the story.
+                        8. Visual prompts must be kid-friendly.
+                        9. No Chinese elements.
+                        10. Use Vietnamese context only.
+                        11. Never invent new motion names.
+                        12. Never invent new transition names.
 
                         Return STRICT JSON:
+                        {{
+                        "title": "...",
+                        "scenes": [
                             {{
-                            "title": "...",
-                            "scenes": [
+                            "scene_id": 1,
+                            "duration": 5,
+                            "transition": "...",
+                            "motion": "...",
+                            "visual_prompt": "...",
+                            "voice_segments": [
                                 {{
-                                "scene_id": 1,
-                                "duration": 5,
-                                "transition": "...",
-                                "motion": "...",
-                                "visual_prompt": "...",
-                                "voice_segments": [
-                                    {{
-                                        "speaker": "...",
-                                        "text": "..."
-                                    }}
-                                ]
+                                    "speaker": "...",
+                                    "text": "..."
                                 }}
                             ]
                             }}
+                        ]
+                        }}
                         "#,
                         main_char.personality_prompt,
+                        main_char.visual_anchor,
                         spotlight_chars,
                         supporting_chars,
-                        main_char.visual_anchor
+                        scene_motions,
+                        scene_transitions,
                     );
 
                     let user = format!(r#"
@@ -265,8 +304,20 @@ pub async fn run_agent_workflow(
 
                     let resp = build_content(client, &system, &user, true).await?;
 
-                    let artifact: VideoArtifact = serde_json::from_str(&resp)
+                    let mut artifact: VideoArtifact = serde_json::from_str(&resp)
                         .map_err(|e| ctx("JSON parse", e))?;
+
+                    for scene in &mut artifact.scenes {
+                        for segment in &mut scene.voice_segments {
+                            segment.voice_id = Some(
+                                EDU_CHARACTERS
+                                .iter()
+                                .find(|c| c.name == segment.speaker)
+                                .map(|c| c.voice_id.to_string())
+                                .unwrap_or_else(|| BASE_VOICE.to_string())
+                            );
+                        }
+                    }
 
                     state.final_json = Some(artifact);
                     state.current_node = AgentNode::Builder;

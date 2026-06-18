@@ -5,7 +5,7 @@ use reqwest::Client;
 pub async fn generate_tts(
     client: &Client,
     text: &str,
-    speaker: Option<&str>,
+    _voice: &str,
 ) -> Result<Vec<u8>, String> {
 let voice =
         env::var("EDGE_VOICE").unwrap_or_else(|_| "vi-VN-AriaNeural".to_string());

@@ -60,7 +60,7 @@ pub async fn generate_script(
 pub async fn generate_tts(
     client: &Client,
     text: &str,
-    speaker: Option<&str>,
+    _voice: &str,
 ) -> Result<Vec<u8>, String> {
     let api_key =
         env::var("GEMINI_API_KEY")

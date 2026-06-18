@@ -4,6 +4,9 @@ use serde::{Deserialize, Serialize};
 use crate::helper::*;
 use crate::enums::*;
 
+// w2KTJ6MO4SIK6nWK4YH8 pNInz6obpgDQGcFmaJgB
+pub const BASE_VOICE: &str = "pNInz6obpgDQGcFmaJgB";
+
 #[derive(Debug, Clone)]
 pub struct Character {
     pub enabled: bool,
@@ -33,8 +36,6 @@ pub struct Character {
     pub personality_prompt: &'static str,
 }
 
-// w2KTJ6MO4SIK6nWK4YH8 pNInz6obpgDQGcFmaJgB
-pub const BASE_VOICE: &str = "pNInz6obpgDQGcFmaJgB";
 pub const EDU_CHARACTERS: &[Character] = &[
     Character {
         enabled: true,
@@ -282,8 +283,9 @@ pub struct VideoArtifact {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct VoiceSegment {
-    pub speaker: String,
     pub text: String,
+    pub speaker: String,
+    pub voice_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

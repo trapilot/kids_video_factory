@@ -2,21 +2,17 @@ use std::env;
 use reqwest::Client;
 use serde_json::json;
 
-use crate::models::BASE_VOICE;
-
 pub async fn generate_tts(
     client: &Client,
     text: &str,
-    speaker: Option<&str>,
+    voice: &str,
 ) -> Result<Vec<u8>, String> {
     let api_key = env::var("ELEVENLABS_API_KEY")
         .map_err(|_| "Missing ELEVENLABS_API_KEY")?;
-
-    let speaker = speaker.unwrap_or(BASE_VOICE);
     
     let url = format!(
         "https://api.elevenlabs.io/v1/text-to-speech/{}",
-        speaker
+        voice
     );
 
     let payload = json!({

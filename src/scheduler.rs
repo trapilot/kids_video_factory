@@ -26,6 +26,13 @@ pub async fn run_scheduler(
         };
 
         if state.meta.retry_count >= state.meta.max_retry {
+            println!(
+                "⛔ Pending session: {} | node: {:?} | topic: {}",
+                state.session_id,
+                state.current_node,
+                state.target_topic,
+            );
+
             let updated_at = chrono::DateTime::parse_from_rfc3339(&state.meta.updated_at)
                 .map(|dt| dt.with_timezone(&chrono::Local))
                 .ok();
@@ -33,26 +40,26 @@ pub async fn run_scheduler(
             if let Some(last_time) = updated_at {
                 let elapsed = chrono::Local::now() - last_time;
 
-                // Threshold: 1 hour
-                if elapsed.num_minutes() >= 60 {
+                // Threshold: 30 minutes
+                if elapsed.num_minutes() >= 30 {
                     let _ = db.delete_state(&state.session_id).await;
-                    println!("⛔ Removed session_id: {}", state.session_id);
+                    println!("ℹ️  Removed session: {}", state.session_id);
                 } else {
                     if app_debug {
                         let _ = db.save_state(&state.revived()).await;
-                        println!("🔄 Revived");
-                        continue
+                        println!("🔄 Revived session: {}", state.session_id);
+                    } else {
+                        println!("ℹ️  Reported, wait 10 minutes for next check");
+                        sleep(Duration::from_mins(10)).await;
                     }
-
-                    sleep(Duration::from_mins(10)).await;
                 }
-                continue;
             } else {
                 let _ = db.save_state(&state.cancelled()).await;
+                println!("ℹ️ Cancelled, wait 30 minutes to start new session");
 
-                println!("⛔ Cancelled, wait 30 minutes to start new session.");
                 sleep(Duration::from_mins(30)).await;
             }
+            continue;
         }
 
         let result = workflow::run_agent_workflow(
@@ -71,15 +78,16 @@ pub async fn run_scheduler(
             }
 
             Err(e) => {
-                println!("⛔ ERR: {}", e);
+                println!("🛑 ERR: {}", e);
                 // 🔥 exponential backoff
                 let next_backoff = next_backoff(state.meta.backoff_ms as u64);
 
-                println!("🔁 Retry in {}ms", next_backoff);
-                sleep(Duration::from_millis(next_backoff)).await;
-
                 let _ = db.save_state(&state.retry(e)).await;
 
+                if state.meta.retry_count <= state.meta.max_retry {
+                    println!("🔁 Retry in {}ms", next_backoff);
+                    sleep(Duration::from_millis(next_backoff)).await;
+                }
             }
         }
     }
