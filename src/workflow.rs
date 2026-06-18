@@ -124,11 +124,14 @@ pub async fn run_agent_workflow(
                         .map(|v| v.as_str().unwrap().to_string())
                         .collect();
                     
+                    println!("🧠[Planner] Topic will be \"{}\"", state.target_topic);
+                    
                     state.current_node = AgentNode::Writer;
+                    let _ = db.save_state(&state.reset()).await;
                 }
 
                 AgentNode::Writer => {
-                    println!("✍️ [Writer] Generating final video artifact...");
+                    println!("✍️ [Writer] Generating video artifact...");
                     
                     let main_char = EDU_CHARACTERS
                         .iter()
@@ -326,6 +329,7 @@ pub async fn run_agent_workflow(
 
                     state.final_json = Some(artifact);
                     state.current_node = AgentNode::Builder;
+                    let _ = db.save_state(&state.reset()).await;
                 }
 
                 AgentNode::Builder => {
@@ -353,6 +357,7 @@ pub async fn run_agent_workflow(
 
                     state.video_path = final_video;
                     state.current_node = AgentNode::Publisher;
+                    let _ = db.save_state(&state.reset()).await;
                 }
 
                 AgentNode::Publisher => {
@@ -382,6 +387,7 @@ pub async fn run_agent_workflow(
                     }
                     
                     state.current_node = AgentNode::End;
+                    let _ = db.save_state(&state.reset()).await;
                 }
 
                 AgentNode::End => {

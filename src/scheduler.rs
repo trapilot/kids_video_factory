@@ -3,6 +3,7 @@ use std::sync::Arc;
 use tokio::time::{sleep, Duration};
 
 use crate::db::DbManager;
+use crate::enums::*;
 use crate::models::*;
 use crate::helper::*;
 use crate::workflow;
@@ -46,6 +47,7 @@ pub async fn run_scheduler(
                     println!("ℹ️  Removed session: {}", state.session_id);
                 } else {
                     if app_debug {
+                        // let _ = db.save_state(&state.revert(AgentNode::Renderer)).await;
                         let _ = db.save_state(&state.revived()).await;
                         println!("🔄 Revived session: {}", state.session_id);
                     } else {

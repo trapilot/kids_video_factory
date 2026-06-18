@@ -116,8 +116,7 @@ pub async fn ffmpeg_render(target_path: String, timelines: &Vec<VideoTimeline>) 
     }
     
     let final_path = format!("{}/final_video.mp4", &target_path);
-    let final_stream = format!("[v{}]", timelines.len() - 1);
-    
+
     if tokio::fs::try_exists(&final_path).await.unwrap_or(false) {
         println!("🎬 FFmpeg already rendered");
         return Ok(final_path.to_string());
@@ -135,11 +134,11 @@ pub async fn ffmpeg_render(target_path: String, timelines: &Vec<VideoTimeline>) 
             println!("🎬 [FFmpeg] Starting render scene {}", timeline.scene_id);
 
             // Check input files
-            if tokio::fs::try_exists(&timeline.visual_path).await.unwrap_or(false) {
+            if !tokio::fs::try_exists(&timeline.visual_path).await.unwrap_or(false) {
                 return Err(format!("Missing visual file: {}", timeline.visual_path));
             }
 
-            if tokio::fs::try_exists(&timeline.audio_path).await.unwrap_or(false) {
+            if !tokio::fs::try_exists(&timeline.audio_path).await.unwrap_or(false) {
                 return Err(format!("Missing audio file: {}", timeline.audio_path));
             }
 
@@ -179,7 +178,6 @@ pub async fn ffmpeg_render(target_path: String, timelines: &Vec<VideoTimeline>) 
                 .output()
                 .await
                 .map_err(|e| e.to_string())?;
-            
             if !output.status.success() {
                 return Err(format!(
                     "FFmpeg failed: {}",
@@ -191,9 +189,11 @@ pub async fn ffmpeg_render(target_path: String, timelines: &Vec<VideoTimeline>) 
         video_paths.push(video_path);
     }
     
-    println!("🎬 [FFmpeg] Rendering the final: {}", final_path);
+    println!("🎬 [FFmpeg] Starting render video {}", final_path);
     let mut filter_parts = Vec::new();
     let mut offset = timelines[0].duration - Transition::DURATION;
+
+    // Video chain
     for i in 1..timelines.len() {
         let transition =Transition::from_str(&timelines[i - 1].transition)
                 .unwrap_or(Transition::DEFAULT);
@@ -220,7 +220,28 @@ pub async fn ffmpeg_render(target_path: String, timelines: &Vec<VideoTimeline>) 
         offset += timelines[i].duration - Transition::DURATION;
     }
 
+    // Audio chain
+    for i in 1..timelines.len() {
+        if i == 1 {
+            filter_parts.push(format!(
+                "[0:a][1:a]acrossfade=d={}[a1]",
+                Transition::DURATION
+            ));
+        } else {
+            filter_parts.push(format!(
+                "[a{}][{}:a]acrossfade=d={}[a{}]",
+                i - 1,
+                i,
+                Transition::DURATION,
+                i
+            ));
+        }
+    }
+
+    let stream_video = format!("[v{}]", timelines.len() - 1);
+    let stream_audio = format!("[a{}]", timelines.len() - 1);
     let mut cmd = tokio::process::Command::new("ffmpeg");
+
     cmd.arg("-y");
     for video_path in &video_paths {
         cmd.args(["-i", video_path]);
@@ -229,11 +250,25 @@ pub async fn ffmpeg_render(target_path: String, timelines: &Vec<VideoTimeline>) 
         "-filter_complex", &filter_parts.join(";"),
     ]);
     cmd.args([
-        "-map", &final_stream,
+        "-map", &stream_video,
+        "-map", &stream_audio,
         "-c:v", "libx264",
+        "-c:a", "aac",
+        "-movflags", "+faststart",
         &final_path,
     ]);
-    
+
+    let output = cmd
+        .output()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        return Err(format!(
+            "FFmpeg failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+        
     println!("🎬 [FFmpeg] Rendered successfully");
     Ok(final_path.to_string())
 }

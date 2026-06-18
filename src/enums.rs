@@ -11,20 +11,6 @@ pub enum AgentNode {
     Publisher,
     End,
 }
-impl AgentNode {
-    pub fn back(&self) -> Option<Self> {
-        use AgentNode::*;
-
-        match self {
-            Planner => None,
-            Writer => Some(Planner),
-            Builder => Some(Writer),
-            Renderer => Some(Builder),
-            Publisher => Some(Renderer),
-            End => Some(Publisher),
-        }
-    }
-}
 impl Default for AgentNode {
     fn default() -> Self {
         AgentNode::Planner

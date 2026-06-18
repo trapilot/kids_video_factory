@@ -229,12 +229,10 @@ impl VideoState {
         self
     }
 
-    // pub fn revert(&mut self) -> &Self {
-    //     if let Some(prev) = self.current_node.back() {
-    //         self.current_node = prev;
-    //     }
-    //     self
-    // }
+    pub fn revert(&mut self, node: AgentNode) -> &Self {
+        self.current_node = node;
+        self.reset()
+    }
 
     pub fn retry(&mut self, e: String) -> &Self {
         self.meta.updated_at = now_rfc();
@@ -248,6 +246,14 @@ impl VideoState {
         self.meta.updated_at = now_rfc();
         self.meta.retry_count = self.meta.max_retry - 1;
         self.meta.status = "revived".into();
+        self
+    }
+
+    pub fn reset(&mut self) -> &Self {
+        self.meta.updated_at = now_rfc();
+        self.meta.retry_count = 0;
+        self.meta.last_error = None;
+        self.meta.status = "running".into();
         self
     }
 
