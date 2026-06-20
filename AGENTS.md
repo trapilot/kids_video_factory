@@ -148,7 +148,7 @@ pub struct VideoState {
     pub supporting_characters: Vec<String>,
     pub concept_ideas: Vec<String>,
     pub draft_script: String,
-    pub final_json: Option<VideoArtifact>,
+    pub final_json: Option<Storyboard>,
     pub scene_assets: Vec<SceneAsset>,
     pub current_node: AgentNode,
     pub session_id: String,

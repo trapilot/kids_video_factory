@@ -2,9 +2,10 @@ use reqwest::{Client, header};
 use serde_json::{json, Value};
 use std::env;
 
-use crate::config::CONFIG;
+use crate::entities::*;
 
-pub async fn upload_to_youtube(client: &Client, video_path: &str, title: &str) -> Result<(), String> {
+
+pub async fn upload_to_youtube(client: &Client, video_path: &str, payload: YoutubePayload) -> Result<(), String> {
     let client_id = env::var("YOUTUBE_CLIENT_ID").map_err(|e| e.to_string())?;
     let client_secret = env::var("YOUTUBE_CLIENT_SECRET").map_err(|e| e.to_string())?;
     let refresh_token = env::var("YOUTUBE_REFRESH_TOKEN").map_err(|e| e.to_string())?;
@@ -35,10 +36,10 @@ pub async fn upload_to_youtube(client: &Client, video_path: &str, title: &str) -
     // 3. Metadata
     let metadata = json!({
         "snippet": {
-            "title": title,
-            "description": &CONFIG.movie.default_description,
-            "tags": &CONFIG.movie.default_tags,
-            "categoryId": &CONFIG.movie.youtube_category,
+            "title": &payload.title,
+            "description": &payload.description,
+            "tags": &payload.tags,
+            "categoryId": &payload.category_id,
         },
         "status": {
             "privacyStatus": "public",
@@ -80,14 +81,23 @@ Content-Type: video/mp4\r\n\r\n",
     }
 }
 
-pub async fn upload_to_tiktok(client: &Client, video_path: &str, title: &str) -> Result<(), String> {
+pub async fn upload_to_tiktok(client: &Client, video_path: &str, payload: TiktokPayload) -> Result<(), String> {
     let access_token = env::var("TIKTOK_ACCESS_TOKEN").unwrap();
     let video_bytes = tokio::fs::read(video_path).await.map_err(|e| e.to_string())?;
     let size = video_bytes.len();
 
     let init_payload = json!({
-        "post_info": { "title": title, "privacy_level": "PUBLIC_TO_EVERYONE", "disable_comment": true },
-        "source_info": { "source": "FILE_UPLOAD", "video_size": size, "chunk_size": size, "total_chunk_count": 1 }
+        "post_info": {
+            "title": &payload.title,
+            "privacy_level": &payload.privacy_level,
+            "disable_comment": &payload.disable_comment,
+        },
+        "source_info": {
+            "source": "FILE_UPLOAD",
+            "video_size": size,
+            "chunk_size": size,
+            "total_chunk_count": 1,
+        }
     });
 
     let init_res = client.post("https://open.tiktokapis.com/v2/post/publish/video/init/")

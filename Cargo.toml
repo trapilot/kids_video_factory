@@ -8,11 +8,17 @@ tokio = { version = "1.35", features = ["full", "time"] }
 reqwest = { version = "0.11", features = ["json", "multipart"] }
 serde = { version = "1.0", features = ["derive"] }
 uuid = { version = "1", features = ["v4"] }
-rusqlite = "0.30"
+sqlx = { version = "0.9.0", features = [
+    "runtime-tokio",
+    "tls-rustls",
+    "sqlite",
+    "macros"
+] }
 serde_json = "1.0"
+strum = "0.27"
+strum_macros = "0.27"
 chrono = "0.4"
 dotenvy = "0.15"
 futures = "0.3"
 base64 = "0.22"
 rand = "0.8"
-anyhow = "1"

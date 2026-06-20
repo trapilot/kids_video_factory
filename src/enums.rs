@@ -1,32 +1,147 @@
-
-use std::str::FromStr;
 use serde::{Deserialize, Serialize};
+use strum_macros::{Display, EnumString};
+#[derive(Debug)]
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum AgentNode {
+pub enum AppError {
+    Provider(ApiError),
+    Database(String),
+    Json(String),
+    Build(String),
+    Upload(String),
+}
+impl std::fmt::Display for AppError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AppError::Provider(err) => {
+                write!(f, "Provider Error: {}", err)
+            }
+
+            AppError::Upload(err) => {
+                write!(f, "Upload Error: {}", err)
+            }
+
+            AppError::Database(msg) => {
+                write!(f, "Database Error: {}", msg)
+            }
+
+            AppError::Json(msg) => {
+                write!(f, "Json Error: {}", msg)
+            }
+
+            AppError::Build(msg) => {
+                write!(f, "Build Error: {}", msg)
+            }
+        }
+    }
+}
+impl std::error::Error for AppError {}
+impl From<ApiError> for AppError {
+    fn from(err: ApiError) -> Self {
+        AppError::Provider(err)
+    }
+}
+
+#[derive(Debug)]
+pub enum ApiError {
+    Unauthorized(String),
+    QuotaExceeded(String, u64),
+    RateLimited(String, u64),
+    InvalidResponse(String),
+    InvalidApiKey(String),
+    Internal(String),
+    Network(String),
+    NotSupport(String),
+}
+impl From<ApiError> for String {
+    fn from(err: ApiError) -> Self {
+        err.to_string()
+    }
+}
+impl std::fmt::Display for ApiError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ApiError::Unauthorized(msg) => {
+                write!(f, "Unauthorized: {}", msg)
+            }
+
+            ApiError::QuotaExceeded(msg, wait) => {
+                write!(f, "Quota exceeded: {}s {}", wait, msg)
+            }
+
+            ApiError::RateLimited(msg, wait) => {
+                write!(f, "Rate limited: {}s {}", wait, msg)
+            }
+
+            ApiError::InvalidApiKey(msg) => {
+                write!(f, "Invalid API key: {}", msg)
+            }
+
+            ApiError::InvalidResponse(msg) => {
+                write!(f, "Invalid response: {}", msg)
+            }
+
+            ApiError::NotSupport(msg) => {
+                write!(f, "Not supported: {}", msg)
+            }
+
+            _ => write!(f, "Invalid ApiError")
+        }
+    }
+}
+
+#[derive(Debug, Clone, Display, EnumString, Serialize, Deserialize, Eq, PartialEq, Hash, sqlx::Type)]
+#[strum(serialize_all = "lowercase")]
+#[serde(rename_all = "lowercase")]
+#[sqlx(rename_all = "lowercase", type_name = "text")]
+pub enum AgentType {
+    Manager,
     Planner,
     Writer,
     Builder,
     Renderer,
     Publisher,
-    End,
+    Cleaner,
 }
-impl Default for AgentNode {
+impl Default for AgentType {
     fn default() -> Self {
-        AgentNode::Planner
+        AgentType::Manager
     }
 }
-impl std::fmt::Display for AgentNode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            AgentNode::Planner => write!(f, "planner"),
-            AgentNode::Writer => write!(f, "writer"),
-            AgentNode::Builder => write!(f, "builder"),
-            AgentNode::Renderer => write!(f, "renderer"),
-            AgentNode::Publisher => write!(f, "publisher"),
-            AgentNode::End => write!(f, "end"),
-        }
+
+#[derive(Debug, Clone, Display, EnumString, Serialize, Deserialize, sqlx::Type)]
+#[strum(serialize_all = "lowercase")]
+#[serde(rename_all = "lowercase")]
+#[sqlx(rename_all = "lowercase", type_name = "text")]
+pub enum WorkflowStatus {
+    Pending,
+    Running,
+    Completed,
+    Failed,
+}
+
+#[derive(Debug, Clone, Display, EnumString, Serialize, Deserialize, sqlx::Type)]
+#[strum(serialize_all = "lowercase")]
+#[serde(rename_all = "lowercase")]
+#[sqlx(rename_all = "lowercase", type_name = "text")]
+pub enum JobStatus {
+    Pending,
+    Processing,
+    Completed,
+    Failed,
+}
+impl Default for JobStatus {
+    fn default() -> Self {
+        JobStatus::Pending
     }
+}
+
+#[derive(Debug, Clone, Display, EnumString, Serialize, Deserialize, Eq, PartialEq, Hash)]
+#[strum(serialize_all = "lowercase")]
+#[serde(rename_all = "lowercase")]
+pub enum Provider {
+    Gemini,
+    Cloudflare,
+    ElevenLabs,
 }
 
 #[derive(Debug, Clone)]
@@ -36,14 +151,23 @@ pub enum MediaType {
     Audio,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Display, EnumString)]
 pub enum VoiceMode {
     PerSegment,
     SingleVoice,
 }
 
+#[derive(Debug, Clone, Display, EnumString, Serialize, Deserialize)]
+#[strum(serialize_all = "lowercase")]
+#[serde(rename_all = "lowercase")]
+pub enum RenderMode {
+    Concat,
+    FilterComplex,
+}
 
-#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
+#[derive(Debug, Clone, Display, EnumString, Serialize, Deserialize)]
+#[strum(serialize_all = "lowercase")]
+#[serde(rename_all = "lowercase")]
 pub enum Motion {
     None,
     ZoomIn,
@@ -70,8 +194,8 @@ impl Motion {
         Motion::DollyOut,
     ];
 
-    pub fn ffmpeg_filter(&self, duration: f64) -> Option<String> {
-        let frames = (duration * 25.0) as u32;
+    pub fn ffmpeg_filter(&self, duration_secs: f64) -> Option<String> {
+        let frames = (duration_secs * 25.0) as u32;
 
         match self {
             Motion::None => None,
@@ -87,43 +211,10 @@ impl Motion {
         }
     }
 }
-impl std::fmt::Display for Motion {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Motion::None => write!(f, "None"),
-            Motion::ZoomIn => write!(f, "ZoomIn"),
-            Motion::ZoomOut => write!(f, "ZoomOut"),
-            Motion::PanLeft => write!(f, "PanLeft"),
-            Motion::PanRight => write!(f, "PanRight"),
-            Motion::PanUp => write!(f, "PanUp"),
-            Motion::PanDown => write!(f, "PanDown"),
-            Motion::KenBurns => write!(f, "KenBurns"),
-            Motion::DollyIn => write!(f, "DollyIn"),
-            Motion::DollyOut => write!(f, "DollyOut"),
-        }
-    }
-}
-impl FromStr for Motion {
-    type Err = String;
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "None" => Ok(Motion::None),
-            "ZoomIn" => Ok(Motion::ZoomIn),
-            "ZoomOut" => Ok(Motion::ZoomOut),
-            "PanLeft" => Ok(Motion::PanLeft),
-            "PanRight" => Ok(Motion::PanRight),
-            "PanUp" => Ok(Motion::PanUp),
-            "PanDown" => Ok(Motion::PanDown),
-            "KenBurns" => Ok(Motion::KenBurns),
-            "DollyIn" => Ok(Motion::DollyIn),
-            "DollyOut" => Ok(Motion::DollyOut),
-            _ => Err(format!("Invalid motion: {}", s)),
-        }
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
+#[derive(Debug, Clone, Display, EnumString, Serialize, Deserialize)]
+#[strum(serialize_all = "lowercase")]
+#[serde(rename_all = "lowercase")]
 pub enum Transition {
     None,
     Fade,
@@ -136,8 +227,7 @@ pub enum Transition {
     FadeWhite,
 }
 impl Transition {
-    pub const DURATION: f64 = 1.0;
-    pub const DEFAULT: Transition = Transition::Fade;
+    pub const DURATION: f64 = 2.0;
     pub const ALL: &'static [Transition] = &[
         Transition::None,
         Transition::Fade,
@@ -150,9 +240,13 @@ impl Transition {
         Transition::FadeWhite,
     ];
 
+    pub fn is_active(&self) -> bool {
+        !matches!(self, Transition::None)
+    }
+
     pub fn ffmpeg_name(&self) -> &'static str {
         match self {
-            Self::None => "fade",
+            Self::None => "",
             Self::Fade => "fade",
             Self::SlideLeft => "slideleft",
             Self::SlideRight => "slideright",
@@ -163,37 +257,11 @@ impl Transition {
             Self::FadeWhite => "fadewhite",
         }
     }
-}
-impl std::fmt::Display for Transition {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    
+    pub fn ffmpeg_filter(&self, duration_secs: f64) -> Option<String> {
+        let adelay_ms = (duration_secs / 2.0) * 1000.0;
         match self {
-            Transition::None => write!(f, "None"),
-            Transition::Fade => write!(f, "Fade"),
-            Transition::SlideLeft => write!(f, "SlideLeft"),
-            Transition::SlideRight => write!(f, "SlideRight"),
-            Transition::WipeLeft => write!(f, "WipeLeft"),
-            Transition::WipeRight => write!(f, "WipeRight"),
-            Transition::CircleOpen => write!(f, "CircleOpen"),
-            Transition::FadeBlack => write!(f, "FadeBlack"),
-            Transition::FadeWhite => write!(f, "FadeWhite"),
-        }
-    }
-}
-impl FromStr for Transition {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "None" => Ok(Transition::None),
-            "Fade" => Ok(Transition::Fade),
-            "SlideLeft" => Ok(Transition::SlideLeft),
-            "SlideRight" => Ok(Transition::SlideRight),
-            "WipeLeft" => Ok(Transition::WipeLeft),
-            "WipeRight" => Ok(Transition::WipeRight),
-            "CircleOpen" => Ok(Transition::CircleOpen),
-            "FadeBlack" => Ok(Transition::FadeBlack),
-            "FadeWhite" => Ok(Transition::FadeWhite),
-            _ => Err(format!("Invalid transition: {}", s)),
+            _ => Some(format!("[1:a]adelay={0}|{0}[a_delayed];[a_delayed]apad[aout]", adelay_ms)),
         }
     }
 }

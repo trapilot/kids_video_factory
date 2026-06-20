@@ -1,34 +1,23 @@
-use chrono::{Local, Datelike, Utc};
 use rand::Rng;
 
 use crate::enums::*;
 
-pub fn now_ts() -> String {
-    Local::now()
-        .format("%Y-%m-%d %H:%M:%S")
-        .to_string()
+pub fn start_of_today_ts() -> i64 {
+    let now = chrono::Utc::now();
+    let start = now.date_naive().and_hms_opt(0, 0, 0).unwrap();
+    start.and_utc().timestamp()
 }
 
-pub fn now_ymd() -> String {
-    Local::now()
-        .format("%Y%m%d")
-        .to_string()
-}
-
-pub fn now_rfc() -> String {
-    Local::now().to_rfc3339()
-}
-
-pub fn now_age(birth_year: i32) -> i32 {
-    calc_age(birth_year, Utc::now().year())
-}
-
-pub fn calc_age(birth_year: i32, current_year: i32) -> i32 {
-    current_year - birth_year
-}
-
-pub fn left_pad(num: u32, digits: usize) -> String {
-    format!("{:0width$}", num, width = digits)
+pub fn start_of_recent_ts(days: u8) -> i64 {
+    let days_back = days.saturating_sub(1) as u64;
+    chrono::Utc::now()
+        .date_naive()
+        .checked_sub_days(chrono::Days::new(days_back))
+        .unwrap()
+        .and_hms_opt(0, 0, 0)
+        .unwrap()
+        .and_utc()
+        .timestamp()
 }
 
 pub fn next_backoff(current_ms: u64) -> u64 {
@@ -39,10 +28,6 @@ pub fn next_backoff(current_ms: u64) -> u64 {
     };
 
     rand::thread_rng().gen_range(0..=max_backoff)
-}
-
-pub fn ctx(node: &str, err: impl ToString) -> String {
-    format!("[{}] {}", node, err.to_string())
 }
 
 pub fn detect_media(bytes: &[u8]) -> Option<MediaType> {

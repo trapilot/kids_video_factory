@@ -1,17 +1,17 @@
-use std::env;
 use reqwest::Client;
 use serde_json::json;
 
-use crate::config::CONFIG;
+use crate::config::*;
+use crate::enums::ApiError;
+
 
 pub async fn generate_tts(
     client: &Client,
+    api_key: &str,
     text: &str,
     voice: &str,
-) -> Result<Vec<u8>, String> {
-    let api_key = env::var("ELEVENLABS_API_KEY")
-        .map_err(|_| "Missing ELEVENLABS_API_KEY")?;
-    
+    tts_setting: &TtsConfig,
+) -> Result<Vec<u8>, ApiError> {
     let url = format!(
         "https://api.elevenlabs.io/v1/text-to-speech/{}",
         voice
@@ -21,28 +21,62 @@ pub async fn generate_tts(
         "text": text,
         "model_id": "eleven_multilingual_v2",
         "voice_settings": {
-            "speed": &CONFIG.tts.speed,
-            "stability": &CONFIG.tts.stability,
-            "similarity_boost": &CONFIG.tts.similarity_boost,
+            "speed": &tts_setting.speed,
+            "stability": &tts_setting.stability,
+            "similarity_boost": &tts_setting.similarity_boost,
         }
     });
 
     let res = client
-        .post(&url)
+        .post(url)
         .header("xi-api-key", api_key)
         .header("Accept", "audio/mpeg")
         .json(&payload)
         .send()
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| ApiError::Network(e.to_string()))?;
 
-    if !res.status().is_success() {
-        let err = res.text().await.unwrap_or_default();
-        return Err(format!("ElevenLabs error: {}", err));
+    let status = res.status();
+    if status == reqwest::StatusCode::UNAUTHORIZED {
+        let body = res.text().await.unwrap_or_default();
+        if body.contains("quota_exceeded") {
+            return Err(
+                ApiError::RateLimited(format!("[ElevenLabs] : {}", body) , 3600)
+            );
+        }
+        return Err(
+            ApiError::Unauthorized(format!("[ElevenLabs]: {}", body))
+        );
+    }
+    if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        let body = res.text().await.unwrap_or_default();
+        return Err(
+            ApiError::RateLimited(format!("[ElevenLabs]: {}", body) , 3600)
+        );
+    }
+    if status == reqwest::StatusCode::FORBIDDEN {
+        let body = res.text().await.unwrap_or_default();
+        return Err(
+            ApiError::RateLimited(format!("[ElevenLabs]: {}", body) , 3600)
+        );
+    }
+    if !status.is_success() {
+        let body = res.text().await.unwrap_or_default();
+        return Err(
+            ApiError::InvalidResponse(format!("[ElevenLabs] HTTP {}: {}", status, body))
+        );
     }
 
-    res.bytes()
+    let bytes = res
+        .bytes()
         .await
         .map(|b| b.to_vec())
         .map_err(|e| e.to_string())
+        .map_err(|e| {
+            ApiError::InvalidResponse(
+                format!("[ElevenLabs] Invalid JSON: {}", e)
+            )
+        })?;
+
+    Ok(bytes)
 }

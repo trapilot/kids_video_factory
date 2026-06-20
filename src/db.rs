@@ -1,173 +1,337 @@
-use rusqlite::{params, Connection, Result};
-use chrono::Local;
-use std::sync::Arc;
-use tokio::sync::Mutex;
+use std::path::Path;
+use sqlx::sqlite::SqlitePoolOptions;
+use sqlx::SqlitePool;
+
+use crate::enums::*;
 use crate::models::*;
 use crate::helper::*;
 
-#[derive(Debug, Clone)]
-pub struct DbManager {
-    conn: Arc<Mutex<Connection>>
-}
 
 pub const APP_VERSION: u8 = 1;
 
+#[derive(Clone)]
+pub struct DbManager {
+    pub pool: SqlitePool,
+}
 impl DbManager {
-    pub fn new(db_path: &str) -> Self {
-        let conn = Connection::open(db_path).expect("open db failed");
-        conn.execute(
-        "CREATE TABLE IF NOT EXISTS video_history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                age INTEGER NOT NULL,
-                topic TEXT NOT NULL,
-                created_at TEXT NOT NULL
-            )",
-            [],
-        ).unwrap();
-
-        conn.execute(
-        "CREATE TABLE IF NOT EXISTS workflow_state (
-                session_id TEXT PRIMARY KEY,
-                state_json TEXT NOT NULL,
-                version INTEGER NOT NULL DEFAULT 1,
-                status TEXT NOT NULL,
-                retry_count INTEGER NOT NULL DEFAULT 0,
-                max_retry INTEGER NOT NULL DEFAULT 3,
-                backoff_ms INTEGER NOT NULL DEFAULT 1000,
-                last_error TEXT,
-                updated_at TEXT NOT NULL
-            )",
-            [],
-        ).unwrap();
-
-        // conn.execute("CREATE INDEX idx_scenes_version_status ON workflow_state(version, status)", []).unwrap();
-        
-        Self {
-            conn: Arc::new(Mutex::new(conn)),
+    pub async fn new(db_url: &str) -> Result<Self, sqlx::Error> {
+        let db_exists = Path::new(db_url).exists();
+        if !db_exists {
+            std::fs::File::create(db_url).ok();
         }
+
+        let pool = SqlitePoolOptions::new()
+            .max_connections(10)
+            .connect(&format!("sqlite:{}?mode=rwc", db_url))
+            .await?;
+
+        if !db_exists {
+            sqlx::query(include_str!("./migrations/schema.sql"))
+                .execute(&pool)
+                .await?;
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        }
+
+        Ok(Self { pool })
     }
 
-    async fn conn(&self) -> tokio::sync::MutexGuard<'_, Connection> {
-        self.conn.lock().await
-    }
-
-    pub async fn save_topic(&self, age: u8, topic: &str) -> Result<()> {
-        let now = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
-        let conn = self.conn().await;
-
-        conn.execute(
-            "INSERT INTO video_history (age, topic, created_at) VALUES (?1, ?2, ?3)",
-            params![age, topic, now],
-        )?;
-        Ok(())
-    }
-
-    pub async fn save_state(
+    pub async fn create_job(
         &self,
-        state: &VideoState,
-    ) -> Result<()> {
-        let conn = self.conn().await;
-        let state_json = serde_json::to_string(state).unwrap();
-        
-        conn.execute(
-            "INSERT INTO workflow_state (
-                session_id,
-                state_json,
+        workflow_id: String,
+        parent: AgentType,
+        agent: AgentType,
+        payload: String,
+    ) -> Result<(), sqlx::Error> {
+        let now = chrono::Utc::now().timestamp();
+        let next_24h = now + 24 * 60 * 60;
+
+        sqlx::query(
+            r#"
+            INSERT INTO jobs (
+                id,
+                workflow_id,
+                parent,
+                agent,
                 version,
                 status,
-                retry_count,
-                max_retry,
-                backoff_ms,
-                last_error,
+                payload,
+                threshold_at,
+                created_at,
                 updated_at
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
-            ON CONFLICT(session_id) DO UPDATE SET
-                state_json=excluded.state_json,
-                status=excluded.status,
-                retry_count=excluded.retry_count,
-                max_retry=excluded.max_retry,
-                backoff_ms=excluded.backoff_ms,
-                last_error=excluded.last_error,
-                updated_at=excluded.updated_at",
-            rusqlite::params![
-                state.session_id,
-                state_json,
-                APP_VERSION,
-                state.meta.status,
-                state.meta.retry_count,
-                state.meta.max_retry,
-                state.meta.backoff_ms,
-                state.meta.last_error,
-                now_rfc()
-            ],
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "#
         )
-        .map_err(|e| e.to_string()).unwrap();
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(workflow_id)
+        .bind(parent.to_string())
+        .bind(agent.to_string())
+        .bind(APP_VERSION)
+        .bind(JobStatus::Pending.to_string())
+        .bind(payload)
+        .bind(next_24h)
+        .bind(now)
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
 
         Ok(())
     }
 
-    pub async fn delete_state(
+    pub async fn claim_job(&self) -> Result<Option<Job>, sqlx::Error> {
+        let job = sqlx::query_as::<_, Job>(
+            r#"
+            UPDATE jobs
+            SET status = ?, locked_at = ?
+            WHERE id = (
+                SELECT id
+                FROM jobs
+                WHERE version = ? AND status = ? AND locked_at IS NULL
+                ORDER BY created_at
+                LIMIT 1
+            )
+            RETURNING *
+            "#
+        )
+        .bind(JobStatus::Processing.to_string())
+        .bind(chrono::Utc::now().timestamp())
+        .bind(APP_VERSION)
+        .bind(JobStatus::Pending.to_string())
+        .fetch_optional(&self.pool)
+        .await?;
+
+        // match &job {
+        //     Some(j) => println!("Job: {}", j.workflow_id),
+        //     None => println!("No pending jobs found"),
+        // }
+
+        Ok(job)
+    }
+
+    pub async fn complete_job(
         &self,
-        session_id: &str,
-    ) -> Result<()> {
-        let conn = self.conn().await;
-
-        conn.execute(
-            "DELETE FROM workflow_state WHERE session_id = ?1",
-            params![session_id],
-        )?;
+        job_id: &str,
+        result: String,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            r#"
+            UPDATE jobs
+            SET status = ?, result = ?, updated_at = ?
+            WHERE id = ?
+            "#,
+        )
+        .bind(JobStatus::Completed.to_string())
+        .bind(result)
+        .bind(chrono::Utc::now().timestamp())
+        .bind(job_id)
+        .execute(&self.pool)
+        .await?;
 
         Ok(())
     }
 
-    pub async fn get_recent_topics(&self, age: u8, limit: u8) -> Result<Vec<String>> {
-        let conn = self.conn().await;
-        
-        let mut stmt = conn.prepare(
-            "SELECT topic FROM video_history WHERE age = ?1 ORDER BY id DESC LIMIT ?2"
-        )?;
-        
-        let topic_iter = stmt.query_map(
-            params![age, limit], |row| row.get::<_, String>(0)
-        )?;
+    pub async fn retry_job(
+        &self,
+        job_id: &str,
+        error: String,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            r#"
+            UPDATE jobs
+            SET status = ?, result = ?, updated_at = ?, locked_at = NULL, retry_count = retry_count + 1
+            WHERE id = ?
+            "#,
+        )
+        .bind(JobStatus::Pending.to_string())
+        .bind(error)
+        .bind(chrono::Utc::now().timestamp())
+        .bind(job_id)
+        .execute(&self.pool)
+        .await?;
 
-        let mut topics = Vec::new();
+        Ok(())
+    }
 
-        for topic in topic_iter {
-            topics.push(topic?);
+    pub async fn fail_job(
+        &self,
+        job_id: &str,
+        error: String,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            r#"
+            UPDATE jobs
+            SET status = ?, result = ?, updated_at = ?
+            WHERE id = ?
+            "#,
+        )
+        .bind(JobStatus::Failed.to_string())
+        .bind(error)
+        .bind(chrono::Utc::now().timestamp())
+        .bind(job_id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    pub async fn revert_job(&self, job_id: &str) -> Result<bool, sqlx::Error> {
+        let result = sqlx::query(
+            r#"
+            UPDATE jobs
+            SET status = ?, retry_count = 0, locked_at = NULL
+            WHERE id = ?
+            "#
+        )
+        .bind(JobStatus::Pending.to_string())
+        .bind(job_id)
+        .execute(&self.pool)
+        .await?;
+
+        // println!("Rollback: {}", result.rows_affected() == 1);
+        Ok(result.rows_affected() == 1)
+    }
+
+    pub async fn handoff_job(
+        &self,
+        job: &Job,
+        agent: AgentType,
+        payload: String,
+    ) -> Result<(), AppError> {
+        if job.agent != agent {
+        self.create_job(
+                job.workflow_id.clone(),
+                job.agent.clone(),
+                agent,
+                payload.clone(),
+            )
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
         }
+
+        self.complete_job(&job.id, payload)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        Ok(())
+    }
+
+    pub async fn create_workflow(
+        &self,
+        age: i32,
+        task: String,
+    ) -> Result<String, sqlx::Error> {
+
+        let workflow_id = uuid::Uuid::new_v4().to_string();
+        let now = chrono::Utc::now().timestamp();
+        let next_24h = now + 24 * 60 * 60;
+
+        sqlx::query(
+            r#"
+            INSERT INTO workflows (
+                id,
+                age,
+                task,
+                status,
+                threshold_at,
+                created_at,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(&workflow_id)
+        .bind(age)
+        .bind(task)
+        .bind(WorkflowStatus::Running.to_string())
+        .bind(next_24h)
+        .bind(now)
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(workflow_id)
+    }
+
+    pub async fn count_workflows_today(&self) -> Result<i64, sqlx::Error> {
+        let start = start_of_today_ts();
+
+        let count: (i64,) = sqlx::query_as(
+            r#"
+            SELECT COUNT(*)
+            FROM workflows
+            WHERE created_at >= ?
+            "#
+        )
+        .bind(start)
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(count.0)
+    }
+
+    pub async fn save_topic(
+        &self,
+        workflow_id: &str,
+        topic: String,
+    ) -> Result<Option<Workflow>, sqlx::Error> {
+        let workflow = sqlx::query_as::<_, Workflow>(
+            r#"
+            UPDATE workflows
+            SET topic = ?, updated_at = ?
+            WHERE id = ?
+            RETURNING *
+            "#,
+        )
+        .bind(topic)
+        .bind(chrono::Utc::now().timestamp())
+        .bind(workflow_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(workflow)
+    }
+
+    pub async fn get_recent_topics(&self, age: i32, days: u8) -> Result<Vec<String>, sqlx::Error> {
+        let since = start_of_recent_ts(days);
+        let topics = sqlx::query_scalar::<_, String>(
+            r#"
+            SELECT topic
+            FROM workflows
+            WHERE age = ? AND created_at >= ? AND status != ?
+            ORDER BY id DESC
+            LIMIT ?
+            "#
+        )
+        .bind(age)
+        .bind(since)
+        .bind(WorkflowStatus::Failed.to_string())
+        .fetch_all(&self.pool)
+        .await?;
 
         Ok(topics)
     }
     
-    pub async fn get_recent_state(&self) -> Result<Option<VideoState>> {
-        let conn = self.conn().await;
+    pub async fn agent_is_busy(
+        &self,
+        agent: AgentType,
+    ) -> Result<bool, sqlx::Error> {
+        let exists: i64 = sqlx::query_scalar(
+            r#"
+            SELECT EXISTS(
+                SELECT 1
+                FROM jobs
+                WHERE version = ? AND agent = ?
+                AND status IN (?, ?)
+            )
+            "#,
+        )
+        .bind(APP_VERSION)
+        .bind(agent.to_string())
+        .bind(JobStatus::Pending.to_string())
+        .bind(JobStatus::Processing.to_string())
+        .fetch_one(&self.pool)
+        .await?;
 
-        let mut stmt = conn.prepare(
-            "
-            SELECT state_json
-            FROM workflow_state
-            WHERE version = ?1
-            ORDER BY updated_at DESC
-            LIMIT 1
-            ",
-        )?;
-
-        let result = stmt.query_row(
-            [APP_VERSION], |row| row.get::<_, String>(0)
-        );
-
-        match result {
-            Ok(state_json) => {
-                match serde_json::from_str::<VideoState>(&state_json) {
-                    Ok(state) if !state.is_finished() => Ok(Some(state)),
-                    Ok(_) => Ok(None),
-                    Err(_) => Ok(None),
-                }
-            }
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(e.into()),
-        }
+        Ok(exists > 0)
     }
 }

@@ -1,96 +1,47 @@
-use std::env;
-use std::sync::Arc;
-use tokio::time::{sleep, Duration};
-
-use crate::db::DbManager;
+use crate::AppContext;
 use crate::enums::*;
-use crate::models::*;
 use crate::helper::*;
-use crate::workflow;
+use crate::entities::*;
 
 
-pub async fn run_scheduler(
-    client: reqwest::Client,
-    db: Arc<DbManager>,
-) {
-    let app_debug = "True" == env::var("APP_DEBUG").unwrap_or_else(|_| "False".to_string());
+pub async fn start(ctx: &AppContext) {
+    let db = ctx.db.clone();
+    let main_char = Character::main_char();
+    let workflow_per_day = ctx.cfg.workflow_per_day;
+    
+    // 🔥 scheduler spawn
+    tokio::spawn(async move {
+        loop {
+            let planner_busy =
+                db.agent_is_busy(AgentType::Planner)
+                .await
+                .unwrap_or(true);
+            
+            let today_count = db.count_workflows_today()
+                .await
+                .unwrap_or(0);
 
-    loop {
-        let mut state = match db.get_recent_state().await {
-            Ok(Some(s)) => s,
-            Ok(None) => VideoState::new(),
-            Err(e) => {
-                eprintln!("DB error, wait 30 minutes to retry: {}", e);
-                sleep(Duration::from_mins(30)).await;
-                continue;
-            }
-        };
+            if !planner_busy && today_count < workflow_per_day {
+                match db.create_workflow(main_char.age(), "Create AI video".to_string()).await {
+                    Ok(workflow_id) => {
 
-        if state.meta.retry_count >= state.meta.max_retry {
-            println!(
-                "⛔ Pending session: {} | node: {:?} | topic: {}",
-                state.session_id,
-                state.current_node,
-                state.target_topic,
-            );
+                        let job = db.create_job(
+                            workflow_id,
+                            AgentType::Manager,
+                            AgentType::Planner,
+                            "Create new workflow".to_string(),
+                        ).await;
 
-            let updated_at = chrono::DateTime::parse_from_rfc3339(&state.meta.updated_at)
-                .map(|dt| dt.with_timezone(&chrono::Local))
-                .ok();
-
-            if let Some(last_time) = updated_at {
-                let elapsed = chrono::Local::now() - last_time;
-
-                // Threshold: 30 minutes
-                if elapsed.num_minutes() >= 30 {
-                    let _ = db.delete_state(&state.session_id).await;
-                    println!("ℹ️  Removed session: {}", state.session_id);
-                } else {
-                    if app_debug {
-                        // let _ = db.save_state(&state.revert(AgentNode::Renderer)).await;
-                        let _ = db.save_state(&state.revived()).await;
-                        println!("🔄 Revived session: {}", state.session_id);
-                    } else {
-                        println!("ℹ️  Reported, wait 10 minutes for next check");
-                        sleep(Duration::from_mins(10)).await;
+                        match job {
+                            Ok(_) => {},
+                            Err(e) => println!("🔴 Job ERR: {}", e)
+                        }
                     }
-                }
-            } else {
-                let _ = db.save_state(&state.cancelled()).await;
-                println!("ℹ️ Cancelled, wait 30 minutes to start new session");
-
-                sleep(Duration::from_mins(30)).await;
-            }
-            continue;
-        }
-
-        let result = workflow::run_agent_workflow(
-            &client,
-            &db,
-            &mut state,
-        ).await;
-
-        match result {
-            Ok(artifact) => {
-                let _ = db.save_state(&state.done()).await;
-                let _ = db.save_topic(state.target_age.clone(), &state.target_topic).await;
- 
-                println!("✅ OK: {}, Updated into long-term memory", artifact.title);
-                sleep(Duration::from_mins(10)).await;
-            }
-
-            Err(e) => {
-                println!("🛑 ERR: {}", e);
-                // 🔥 exponential backoff
-                let next_backoff = next_backoff(state.meta.backoff_ms as u64);
-
-                let _ = db.save_state(&state.retry(e)).await;
-
-                if state.meta.retry_count <= state.meta.max_retry {
-                    println!("🔁 Retry in {}ms", next_backoff);
-                    sleep(Duration::from_millis(next_backoff)).await;
+                    Err(e) => println!("🔴 Workflow ERR: {}", e)
                 }
             }
+            
+            tokio::time::sleep(std::time::Duration::from_hours(2)).await;
         }
-    }
+    });
 }
