@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-use crate::helper::*;
 use crate::enums::*;
+use crate::agent;
 
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -18,8 +18,8 @@ pub struct Workflow {
 pub struct Job {
     pub id: String,
     pub workflow_id: String,
-    pub parent: AgentType,
-    pub agent: AgentType,
+    pub parent: agent::AgentType,
+    pub agent: agent::AgentType,
     pub version: String,
     pub status: JobStatus,
     pub payload: String,

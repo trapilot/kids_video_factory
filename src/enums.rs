@@ -1,112 +1,6 @@
 use serde::{Deserialize, Serialize};
 use strum_macros::{Display, EnumString};
-#[derive(Debug)]
 
-pub enum AppError {
-    Provider(ApiError),
-    Database(String),
-    Json(String),
-    Build(String),
-    Upload(String),
-}
-impl std::fmt::Display for AppError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            AppError::Provider(err) => {
-                write!(f, "Provider Error: {}", err)
-            }
-
-            AppError::Upload(err) => {
-                write!(f, "Upload Error: {}", err)
-            }
-
-            AppError::Database(msg) => {
-                write!(f, "Database Error: {}", msg)
-            }
-
-            AppError::Json(msg) => {
-                write!(f, "Json Error: {}", msg)
-            }
-
-            AppError::Build(msg) => {
-                write!(f, "Build Error: {}", msg)
-            }
-        }
-    }
-}
-impl std::error::Error for AppError {}
-impl From<ApiError> for AppError {
-    fn from(err: ApiError) -> Self {
-        AppError::Provider(err)
-    }
-}
-
-#[derive(Debug)]
-pub enum ApiError {
-    Unauthorized(String),
-    QuotaExceeded(String, u64),
-    RateLimited(String, u64),
-    InvalidResponse(String),
-    InvalidApiKey(String),
-    Internal(String),
-    Network(String),
-    NotSupport(String),
-}
-impl From<ApiError> for String {
-    fn from(err: ApiError) -> Self {
-        err.to_string()
-    }
-}
-impl std::fmt::Display for ApiError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ApiError::Unauthorized(msg) => {
-                write!(f, "Unauthorized: {}", msg)
-            }
-
-            ApiError::QuotaExceeded(msg, wait) => {
-                write!(f, "Quota exceeded: {}s {}", wait, msg)
-            }
-
-            ApiError::RateLimited(msg, wait) => {
-                write!(f, "Rate limited: {}s {}", wait, msg)
-            }
-
-            ApiError::InvalidApiKey(msg) => {
-                write!(f, "Invalid API key: {}", msg)
-            }
-
-            ApiError::InvalidResponse(msg) => {
-                write!(f, "Invalid response: {}", msg)
-            }
-
-            ApiError::NotSupport(msg) => {
-                write!(f, "Not supported: {}", msg)
-            }
-
-            _ => write!(f, "Invalid ApiError")
-        }
-    }
-}
-
-#[derive(Debug, Clone, Display, EnumString, Serialize, Deserialize, Eq, PartialEq, Hash, sqlx::Type)]
-#[strum(serialize_all = "lowercase")]
-#[serde(rename_all = "lowercase")]
-#[sqlx(rename_all = "lowercase", type_name = "text")]
-pub enum AgentType {
-    Manager,
-    Planner,
-    Writer,
-    Builder,
-    Renderer,
-    Publisher,
-    Cleaner,
-}
-impl Default for AgentType {
-    fn default() -> Self {
-        AgentType::Manager
-    }
-}
 
 #[derive(Debug, Clone, Display, EnumString, Serialize, Deserialize, sqlx::Type)]
 #[strum(serialize_all = "lowercase")]
@@ -133,15 +27,6 @@ impl Default for JobStatus {
     fn default() -> Self {
         JobStatus::Pending
     }
-}
-
-#[derive(Debug, Clone, Display, EnumString, Serialize, Deserialize, Eq, PartialEq, Hash)]
-#[strum(serialize_all = "lowercase")]
-#[serde(rename_all = "lowercase")]
-pub enum Provider {
-    Gemini,
-    Cloudflare,
-    ElevenLabs,
 }
 
 #[derive(Debug, Clone)]

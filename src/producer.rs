@@ -1,75 +1,68 @@
 use std::path::Path;
 
-use crate::AppContext;
-use crate::api::*;
-use crate::enums::*;
-use crate::helper::*;
-use crate::entities::*;
+use crate::api;
+use crate::enums;
+use crate::errors;
+use crate::helper;
+use crate::entities;
+use crate::provider;
+use crate::provider::TaskType;
+use crate::workflow;
 
 
 pub async fn build_content(
-    ctx: &AppContext,
+    ctx: &workflow::Context,
     system: &str,
     user: &str,
     is_json: bool,
-) -> Result<String, ApiError> {
-    let max_attempts = ctx.pm
-        .key_count(Provider::Gemini)
-        .await;
-
-    for _ in 0..max_attempts {
-        let guard = match ctx.pm.acquire(Provider::Gemini).await {
-            Some(v) => v,
-            None => break,
-        };
-
-        let provider = guard.provider.clone();
-        let api_key = guard.credential.api_key.clone();
-
-        let result = gemini::generate_script(
-            &ctx.http,
-            &api_key,
-            system,
-            user,
-            is_json,
-        )
-        .await;
-
-        match &result {
-            Ok(_) => return result,
-
-            Err(ApiError::QuotaExceeded(_, wait_sec)) => {
-                ctx.pm
-                    .block_key(
-                        provider.clone(),
-                        &api_key,
-                        *wait_sec,
-                    )
-                    .await;
-
-                continue;
-            }
-
-            Err(ApiError::RateLimited(_, wait_sec)) => {
-                ctx.pm
-                    .block_key(
-                        provider.clone(),
-                        &api_key,
-                        *wait_sec,
-                    )
-                    .await;
-
-                continue;
-            }
-
-            Err(_) => return result,
+) -> Result<String, errors::ProducerError> {
+    let guard = match ctx.pm.acquire(&provider::Provider::Gemini).await {
+        Some(v) => v,
+        None => {
+            return Err(errors::ProducerError::Generate(
+                provider::Provider::Gemini.to_string(),
+                "Provider is acquired".to_string(),
+            ));
         }
-    }
+    };
 
-    Err(ApiError::QuotaExceeded(
-        "All Gemini keys exhausted".into(),
-        0,
-    ))
+    let result =
+        guard.call(provider::ProviderRequest::Text {
+            system: system.to_string(),
+            user: user.to_string(),
+            is_json,
+        })
+        .await?;
+
+    match &result {
+        Ok(_) => return result,
+
+        Err(ApiError::QuotaExceeded(_, wait_sec)) => {
+            ctx.pm
+                .block_key(
+                    provider.clone(),
+                    &api_key,
+                    *wait_sec,
+                )
+                .await;
+
+            continue;
+        }
+
+        Err(ApiError::RateLimited(_, wait_sec)) => {
+            ctx.pm
+                .block_key(
+                    provider.clone(),
+                    &api_key,
+                    *wait_sec,
+                )
+                .await;
+
+            continue;
+        }
+
+        Err(_) => return result,
+    }
 }
 
 pub async fn build_timeline(
@@ -92,7 +85,7 @@ pub async fn build_timeline(
     let mut handles = Vec::new();
     
     let sm = ctx.sm
-        .get_or_create(Provider::ElevenLabs, 2)
+        .get_or_create(enums::Provider::ElevenLabs, 2)
         .await;
 
     for scene in storyboard.scenes.clone() {    
@@ -119,7 +112,7 @@ pub async fn build_timeline(
                 println!("🎬 [FFmpeg] Starting render visual {}", scene.scene_id);
                
                 let guard = pm
-                    .acquire(Provider::Cloudflare)
+                    .acquire(enums::Provider::Cloudflare)
                     .await
                     .ok_or("No Cloudflare key")?;
                 
@@ -148,7 +141,7 @@ pub async fn build_timeline(
                     }
                     Err(e) => {
                         pm.block_key(
-                            Provider::Cloudflare,
+                            enums::Provider::Cloudflare,
                             &account_key,
                             60,
                         )
@@ -180,7 +173,7 @@ pub async fn build_timeline(
                     VoiceMode::PerSegment => {
                         for (i, segment) in scene.voice_segments.iter().enumerate() {
                             let guard = pm
-                                .acquire(Provider::ElevenLabs)
+                                .acquire(enums::Provider::ElevenLabs)
                                 .await
                                 .ok_or("No TTS key")?;
 
@@ -217,7 +210,7 @@ pub async fn build_timeline(
 
                                 Err(e) => {
                                     pm.block_key(
-                                        Provider::ElevenLabs,
+                                        enums::Provider::ElevenLabs,
                                         &api_key,
                                         60,
                                     )
@@ -241,7 +234,7 @@ pub async fn build_timeline(
 
                     VoiceMode::SingleVoice => {
                         let guard = pm
-                            .acquire(Provider::ElevenLabs)
+                            .acquire(enums::Provider::ElevenLabs)
                             .await
                             .ok_or("No TTS key")?;
 
@@ -288,7 +281,7 @@ pub async fn build_timeline(
 
                             Err(e) => {
                                 pm.block_key(
-                                    Provider::ElevenLabs,
+                                    enums::Provider::ElevenLabs,
                                     &api_key,
                                     60,
                                 )

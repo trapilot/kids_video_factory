@@ -1,13 +1,15 @@
-use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::Semaphore;
 
-use crate::AppContext;
-use crate::enums::*;
-use crate::models::*;
-use crate::entities::*;
-use crate::renderer;
+use async_trait::async_trait;
+
+use crate::agent;
+use crate::enums;
+use crate::models;
+use crate::errors;
+use crate::entities;
+use crate::producer;
 use crate::uploader;
+use crate::workflow;
+
 
 pub struct ManagerAgent;
 pub struct PlannerAgent;
@@ -17,101 +19,22 @@ pub struct RendererAgent;
 pub struct PublisherAgent;
 pub struct CleanerAgent;
 
-pub struct AgentPool {
-    semaphore: Arc<Semaphore>,
-}
 
-pub struct AgentPools {
-    pub pools: HashMap<AgentType, AgentPool>,
-}
-
-impl AgentPools {
-    pub fn new() -> Self {
-        let mut pools = HashMap::new();
-
-        pools.insert(AgentType::Manager, AgentPool::new(1));
-        pools.insert(AgentType::Planner, AgentPool::new(1));
-        pools.insert(AgentType::Writer, AgentPool::new(1));
-        pools.insert(AgentType::Builder, AgentPool::new(1));
-        pools.insert(AgentType::Renderer, AgentPool::new(1));
-        pools.insert(AgentType::Publisher, AgentPool::new(1));
-
-        Self { pools }
-    }
-
-    pub fn get(&self, agent: &AgentType) -> &AgentPool {
-        self.pools
-            .get(agent)
-            .unwrap_or_else(|| self.pools.get(&AgentType::Manager).unwrap())
-    }
-}
-
-impl AgentPool {
-    pub fn new(max_concurrency: usize) -> Self {
-        Self {
-            semaphore: Arc::new(Semaphore::new(max_concurrency)),
-        }
-    }
-
-    pub fn has_capacity(&self) -> bool {
-        self.semaphore.available_permits() > 0
-    }
-
-    pub fn spawn(&self, ctx: &AppContext, job: Job) {
-        let Ok(permit) = self.semaphore.clone().try_acquire_owned() else {
-            return;
-        };
-
-        let job_clone: Job = job.clone();
-        let ctx_clone: AppContext = ctx.clone();
-
-        tokio::spawn(async move {
-            let _permit = permit;
-
-            let result = match job_clone.agent {
-                AgentType::Manager => ManagerAgent.run(&ctx_clone, &job).await,
-                AgentType::Planner => PlannerAgent.run(&ctx_clone, &job).await,
-                AgentType::Writer => WriterAgent.run(&ctx_clone, &job).await,
-                AgentType::Builder => BuilderAgent.run(&ctx_clone, &job).await,
-                AgentType::Renderer => RendererAgent.run(&ctx_clone, &job).await,
-                AgentType::Publisher => PublisherAgent.run(&ctx_clone, &job).await,
-                AgentType::Cleaner => CleanerAgent.run(&ctx_clone, &job).await,
-            };
-
-            if let Err(e) = result {
-                eprintln!("❌ Agent {:?} failed job {} --> {}", job_clone.agent, job_clone.id, e);
-                
-                let retry_count = job_clone.retry_count;
-                let max_retry = job_clone.max_retry;
-
-                let db_result = if retry_count < max_retry {
-                    ctx_clone.db.retry_job(&job_clone.id, e.to_string()).await
-                } else {
-                    ctx_clone.db.fail_job(&job_clone.id, e.to_string()).await
-                };
-
-                match db_result {
-                    Ok(_) => {},
-                    Err(e) => eprintln!("❌ Failed job error {} --> {}", job_clone.id, e),
-                }
-            }
-        });
-    }
-}
-
-impl ManagerAgent {
-    pub async fn run(&self, _ctx: &AppContext, job: &Job) -> Result<(), AppError> {
+#[async_trait]
+impl agent::Agent for ManagerAgent {
+    async fn run(&self, _ctx: &workflow::Context, job: &models::Job) -> Result<(), errors::AgentError> {
         println!("Running job: {}", job.id);
         Ok(())
     }
 }
 
-impl PlannerAgent {
-    pub async fn run(&self, ctx: &AppContext, job: &Job) -> Result<(), AppError> {
+#[async_trait]
+impl agent::Agent for PlannerAgent {
+    async fn run(&self, ctx: &workflow::Context, job: &models::Job) -> Result<(), errors::AgentError> {
         println!("🧠[Planner] Creating topic...");
 
-        let main_char = Character::main_char();
-        let spotlight_chars = Character::spotlight_chars()
+        let main_char = entities::Character::main_char();
+        let spotlight_chars = entities::Character::spotlight_chars()
             .iter()
             .map(|c| format!(
                 "- {} ({})\n  Age: {}\n Personality: {}\n  Relations: {}",
@@ -124,7 +47,7 @@ impl PlannerAgent {
             .collect::<Vec<_>>()
             .join("\n");
 
-        let relation_chars = Character::relation_chars()
+        let relation_chars = entities::Character::relation_chars()
             .iter()
             .map(|c| format!(
                 "- {} ({})\n  Age: {}\n Role: {}\n  Relations: {}",
@@ -191,44 +114,46 @@ impl PlannerAgent {
         
 
         let resp =
-            renderer::build_content(&ctx, &system, &user, true)
-            .await?;
+            producer::build_content(&ctx, &system, &user, true)
+            .await
+            .map_err(|e| errors::AgentError::Invalid(e.to_string()))?;
 
-        let story_context: StoryContext =
+        let story_context: entities::StoryContext =
             serde_json::from_str(&resp)
-            .map_err(|e| AppError::Json(e.to_string()))?;
+            .map_err(|e| errors::AgentError::Encode(e.to_string()))?;
 
         let payload =
             serde_json::to_string(&story_context)
-                .map_err(|e| AppError::Json(e.to_string()))?;
+                .map_err(|e| errors::AgentError::Decode(e.to_string()))?;
 
         ctx.db
-            .handoff_job(job, AgentType::Writer, payload)
+            .handoff_job(job, agent::AgentType::Writer, payload)
             .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
+            .map_err(|e| errors::AgentError::Database(e.to_string()))?;
 
         ctx.db
             .save_topic(&job.workflow_id, story_context.topic.clone())
             .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
+            .map_err(|e| errors::AgentError::Database(e.to_string()))?;
 
         Ok(())
     }
 }
 
-impl WriterAgent {
-    pub async fn run(&self, ctx: &AppContext, job: &Job) -> Result<(), AppError> {
+#[async_trait]
+impl agent::Agent for WriterAgent {
+    async fn run(&self, ctx: &workflow::Context, job: &models::Job) -> Result<(), errors::AgentError> {
         println!("✍️ [Writer] Generating video artifact...");
         
-        let story_context: StoryContext =
+        let story_context: entities::StoryContext =
             serde_json::from_str(&job.payload)
-            .map_err(|e| AppError::Json(e.to_string()))?;
+            .map_err(|e| errors::AgentError::Decode(e.to_string()))?;
 
         let main_char =
-            Character::find_char(&story_context.main_character)
-            .unwrap_or(Character::main_char());
+            entities::Character::find_char(&story_context.main_character)
+            .unwrap_or(entities::Character::main_char());
         let spotlight_chars =
-            Character::find_chars(&story_context.spotlight_characters)
+            entities::Character::find_chars(&story_context.spotlight_characters)
             .iter()
             .map(|c| {
                 format!(
@@ -243,7 +168,7 @@ impl WriterAgent {
             .collect::<Vec<_>>()
             .join("\n");
 
-        let supporting_chars = Character::find_chars(&story_context.supporting_characters)
+        let supporting_chars = entities::Character::find_chars(&story_context.supporting_characters)
             .iter()
             .map(|c| {
                 format!(
@@ -258,7 +183,7 @@ impl WriterAgent {
             .collect::<Vec<_>>()
             .join("\n");
 
-        let all_chars = EDU_CHARACTERS
+        let all_chars = entities::EDU_CHARACTERS
             .iter()
             .map(|c| {
                 format!(
@@ -270,13 +195,13 @@ impl WriterAgent {
             .collect::<Vec<_>>()
             .join("\n");
         
-        let scene_motions = Motion::ALL
+        let scene_motions = enums::Motion::ALL
             .iter()
             .map(|m| format!("- {}", m))
             .collect::<Vec<_>>()
             .join("\n");
 
-        let scene_transitions = Transition::ALL
+        let scene_transitions = enums::Transition::ALL
             .iter()
             .map(|m| format!("- {}", m))
             .collect::<Vec<_>>()
@@ -391,15 +316,17 @@ impl WriterAgent {
         );
 
         let resp =
-            renderer::build_content(&ctx, &system, &user, true)
-            .await?;
-        let mut storyboard: Storyboard =
+            producer::build_content(&ctx, &system, &user, true)
+            .await
+            .map_err(|e| errors::AgentError::Invalid(e.to_string()))?;
+
+        let mut storyboard: entities::Storyboard =
             serde_json::from_str(&resp)
-            .map_err(|e| AppError::Json(e.to_string()))?;
+            .map_err(|e| errors::AgentError::Decode(e.to_string()))?;
 
         for scene in &mut storyboard.scenes {
             for segment in &mut scene.voice_segments {
-                let voice_id = Character::find_char(&segment.speaker)
+                let voice_id = entities::Character::find_char(&segment.speaker)
                     .and_then(|c| c.voice_id)
                     .map(str::to_owned)
                     .unwrap_or_else(|| ctx.cfg.voice.base_voice.clone());
@@ -410,96 +337,99 @@ impl WriterAgent {
 
         let payload =
             serde_json::to_string(&storyboard)
-            .map_err(|e| AppError::Json(e.to_string()))?;
+            .map_err(|e| errors::AgentError::Encode(e.to_string()))?;
 
         ctx.db
-            .handoff_job(job, AgentType::Builder, payload)
+            .handoff_job(job, agent::AgentType::Builder, payload)
             .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
+            .map_err(|e| errors::AgentError::Database(e.to_string()))?;
 
         Ok(())
     }
 }
 
-impl BuilderAgent {
-    pub async fn run(self, ctx: &AppContext, job: &Job) -> Result<(), AppError> {
+#[async_trait]
+impl agent::Agent for BuilderAgent {
+    async fn run(&self,  ctx: &workflow::Context, job: &models::Job) -> Result<(), errors::AgentError> {
         println!("🔧[Builder] Generating assets...");
         
-        let storyboard: Storyboard =
+        let storyboard: entities::Storyboard =
             serde_json::from_str(&job.payload)
-            .map_err(|e| AppError::Json(e.to_string()))?;
+            .map_err(|e| errors::AgentError::Decode(e.to_string()))?;
 
-        let timeline: Timeline =
-            renderer::build_timeline(&ctx, &storyboard, job.workflow_path(), VoiceMode::SingleVoice)
+        let timeline: entities::Timeline =
+            producer::build_timeline(&ctx, &storyboard, job.workflow_path(), enums::VoiceMode::SingleVoice)
             .await
-            .map_err(|e| AppError::Json(e.to_string()))?;
+            .map_err(|e| errors::AgentError::Invalid(e.to_string()))?;
 
         let payload = serde_json::to_string(&timeline)
-            .map_err(|e| AppError::Json(e.to_string()))?;
+            .map_err(|e| errors::AgentError::Encode(e.to_string()))?;
 
         ctx.db
-            .handoff_job(job, AgentType::Renderer, payload)
+            .handoff_job(job, agent::AgentType::Renderer, payload)
             .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
+            .map_err(|e| errors::AgentError::Database(e.to_string()))?;
 
         Ok(())
     }
 }
 
-
-impl RendererAgent {
-    pub async fn run(self, ctx: &AppContext, job: &Job) -> Result<(), AppError> {
+#[async_trait]
+impl agent::Agent for RendererAgent {
+    async fn run(&self, ctx: &workflow::Context, job: &models::Job) -> Result<(), errors::AgentError> {
         println!("🎥 [Renderer] Rendering video...");
         
-        let timeline: Timeline =
+        let timeline: entities::Timeline =
             serde_json::from_str(&job.payload)
-            .map_err(|e| AppError::Json(e.to_string()))?;
+            .map_err(|e| errors::AgentError::Decode(e.to_string()))?;
 
-        let video_metadata: VideoMetadata =
-            renderer::ffmpeg_render(&timeline, job.workflow_path())
+        let video_metadata: entities::VideoMetadata =
+            producer::ffmpeg_render(&timeline, job.workflow_path())
             .await
-            .map_err(|e| AppError::Json(e.to_string()))?;
+            .map_err(|e| errors::AgentError::Invalid(e.to_string()))?;
 
         let payload =
             serde_json::to_string(&video_metadata)
-            .map_err(|e| AppError::Json(e.to_string()))?;
+            .map_err(|e| errors::AgentError::Encode(e.to_string()))?;
 
         ctx.db
-            .handoff_job(job, AgentType::Renderer, payload)
+            .handoff_job(job, agent::AgentType::Renderer, payload)
             .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
+            .map_err(|e| errors::AgentError::Database(e.to_string()))?;
 
         Ok(())
     }
 }
 
-impl PublisherAgent {
-    pub async fn run(self, ctx: &AppContext, job: &Job) -> Result<(), AppError> {
+#[async_trait]
+impl agent::Agent for PublisherAgent {
+    async fn run(&self,  ctx: &workflow::Context, job: &models::Job) -> Result<(), errors::AgentError> {
         println!("📤 [Publisher] Publishing the video...");
         
-        let video_metadata: VideoMetadata = serde_json::from_str(&job.payload)
-            .map_err(|e| AppError::Json(e.to_string()))?;
+        let video_metadata: entities::VideoMetadata =
+            serde_json::from_str(&job.payload)
+            .map_err(|e| errors::AgentError::Decode(e.to_string()))?;
 
         let default_settings = ctx.cfg.movie.clone();
 
         let (yt_res, tt_res) = tokio::join!(
-            uploader::upload_to_youtube(&ctx.http, &video_metadata.video_path, YoutubePayload {
+            uploader::upload_to_youtube(&ctx, &video_metadata.video_path, entities::YoutubePayload {
                 title: video_metadata.title.clone(),
                 description: default_settings.default_description,
                 tags: default_settings.default_tags,
                 category_id: default_settings.youtube_category,
             }),
-            uploader::upload_to_tiktok(&ctx.http, &video_metadata.video_path, TiktokPayload {
+            uploader::upload_to_tiktok(&ctx, &video_metadata.video_path, entities::TiktokPayload {
                 title: video_metadata.title.clone(),
                 privacy_level: "PUBLIC_TO_EVERYONE".to_string(),
                 disable_comment: true,
             }),
         );
         
-        let publish_state = PublishState {
+        let publish_state = entities::PublishState {
             all_uploaded: yt_res.is_ok() && tt_res.is_ok(),
             any_uploaded: yt_res.is_ok() ^ tt_res.is_ok(),
-            errors: PublishError {
+            errors: entities::PublishError {
                 youtube: yt_res.err().map(|e| e.to_string()),
                 tiktok: tt_res.err().map(|e| e.to_string()),
             }
@@ -507,39 +437,40 @@ impl PublisherAgent {
 
         if !publish_state.any_uploaded {
             if let Some(err) = &publish_state.errors.youtube {
-                return Err(AppError::Upload(err.to_string()));
+                return Err(errors::AgentError::Upload(err.to_string()));
             }
 
             if let Some(err) = &publish_state.errors.tiktok {
-                return Err(AppError::Upload(err.to_string()));
+                return Err(errors::AgentError::Upload(err.to_string()));
             }
         }
 
         let payload =
             serde_json::to_string(&publish_state)
-            .map_err(|e| AppError::Json(e.to_string()))?;
+            .map_err(|e| errors::AgentError::Encode(e.to_string()))?;
 
         // ctx.db
-        //     .handoff_job(job, AgentType::Cleaner, payload)
+        //     .handoff_job(job, agent::AgentType::Cleaner, payload)
         //     .await
-        //     .map_err(|e| AppError::Database(e.to_string()))?;
+        //     .map_err(|e| errors::AgentError::Database(e.to_string()))?;
 
         ctx.db
             .complete_job(&job.id, payload)
             .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
+            .map_err(|e| errors::AgentError::Database(e.to_string()))?;
         
         Ok(())
     }
 }
 
-
-impl CleanerAgent {
-    pub async fn run(self, ctx: &AppContext, job: &Job) -> Result<(), AppError> {
+#[async_trait]
+impl agent::Agent for CleanerAgent {
+    async fn run(&self,  ctx: &workflow::Context, job: &models::Job) -> Result<(), errors::AgentError> {
         println!("📤 [Cleaner] Cleaning the video...");
 
-        let publish_state: PublishState = serde_json::from_str(&job.payload)
-            .map_err(|e| AppError::Json(e.to_string()))?;
+        let publish_state: entities::PublishState =
+            serde_json::from_str(&job.payload)
+            .map_err(|e| errors::AgentError::Decode(e.to_string()))?;
         
         if let Some(err) = &publish_state.errors.youtube {
             eprintln!("🔴 YouTube error: {}", err);
@@ -552,7 +483,7 @@ impl CleanerAgent {
         ctx.db
             .complete_job(&job.id, "DONE".to_string())
             .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
+            .map_err(|e| errors::AgentError::Database(e.to_string()))?;
 
         Ok(())
     }

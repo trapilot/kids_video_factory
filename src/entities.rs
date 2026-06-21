@@ -217,7 +217,7 @@ pub struct TiktokPayload {
     pub disable_comment: bool,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Default, Serialize, Deserialize, Clone)]
 pub struct PublishError {
     pub youtube: Option<String>,
     pub tiktok: Option<String>,

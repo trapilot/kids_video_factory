@@ -2,6 +2,7 @@ use std::path::Path;
 use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::SqlitePool;
 
+use crate::agent;
 use crate::enums::*;
 use crate::models::*;
 use crate::helper::*;
@@ -38,8 +39,8 @@ impl DbManager {
     pub async fn create_job(
         &self,
         workflow_id: String,
-        parent: AgentType,
-        agent: AgentType,
+        parent: agent::AgentType,
+        agent: agent::AgentType,
         payload: String,
     ) -> Result<(), sqlx::Error> {
         let now = chrono::Utc::now().timestamp();
@@ -194,9 +195,9 @@ impl DbManager {
     pub async fn handoff_job(
         &self,
         job: &Job,
-        agent: AgentType,
+        agent: agent::AgentType,
         payload: String,
-    ) -> Result<(), AppError> {
+    ) -> Result<(), String> {
         if job.agent != agent {
         self.create_job(
                 job.workflow_id.clone(),
@@ -205,12 +206,12 @@ impl DbManager {
                 payload.clone(),
             )
             .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
+            .map_err(|e| e.to_string())?;
         }
 
         self.complete_job(&job.id, payload)
             .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
+            .map_err(|e| e.to_string())?;
 
         Ok(())
     }
@@ -313,7 +314,7 @@ impl DbManager {
     
     pub async fn agent_is_busy(
         &self,
-        agent: AgentType,
+        agent: agent::AgentType,
     ) -> Result<bool, sqlx::Error> {
         let exists: i64 = sqlx::query_scalar(
             r#"
