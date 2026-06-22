@@ -36,7 +36,7 @@ impl Agent for PublisherAgent {
             .upload_all(&video_metadata.video_path, &video_metadata.title, configs)
             .await;
 
-        let mut publish_errors = PublishError::default();
+        let mut publish_errors = uploader::UploaderError::default();
         let mut success_count = 0;
 
         for (channel, res) in &results {
@@ -53,11 +53,15 @@ impl Agent for PublisherAgent {
             }
         }
         
-        let publish_state = PublishState {
+        let publish_state = uploader::UploaderState {
             all_uploaded: success_count == results.len() && results.len() > 0,
             any_uploaded: success_count > 0,
             errors: publish_errors,
         };
+        
+        if !publish_state.any_uploaded {
+            return Err(AgentError::Execute("Upload error....".to_string()));
+        }
 
         let payload =
             serde_json::to_string(&publish_state)

@@ -13,7 +13,7 @@ pub struct WriterAgent;
 #[async_trait]
 impl Agent for WriterAgent {
     async fn run(&self, ctx: &workflow::Context, job: &Job) -> Result<(), AgentError> {
-        println!("✍️ [Writer] Generating video artifact...");
+        println!("✍️  [Writer] Generating video artifact...");
         
         let story_context: StoryContext =
             serde_json::from_str(&job.payload)
@@ -185,9 +185,9 @@ impl Agent for WriterAgent {
             all_chars
         );
 
-        let resp =
-            self.execute(&ctx, &system, &prompt)
-            .await?;
+        let resp = self.execute(&ctx, &system, &prompt)
+            .await
+            .map_err(|e| AgentError::Execute(e.to_string()))?;
 
         let mut storyboard: Storyboard =
             serde_json::from_str(&resp)
@@ -223,14 +223,12 @@ impl WriterAgent {
         ctx: &workflow::Context,
         system: &str,
         prompt: &str,
-    ) -> Result<String, AgentError> {
+    ) -> Result<String, String> {
         let provider = &provider::Provider::Gemini;
         let guard = match ctx.pm.acquire(&provider).await {
             Some(v) => v,
             None => {
-                return Err(AgentError::Acquire(
-                    format!("{}", &provider.to_string())
-                ));
+                return Err(format!("{}", &provider.to_string()));
             }
         };
 
@@ -245,11 +243,11 @@ impl WriterAgent {
         let rsp = guard
             .call(req)
             .await
-            .map_err(|e| AgentError::UnexpectedResponse(e.to_string()))?;
+            .map_err(|e| e.to_string())?;
 
         rsp
             .into_text()
-            .map_err(|e| AgentError::UnexpectedResponse(e.to_string()))
+            .map_err(|e| e.to_string())
         
     }
 }

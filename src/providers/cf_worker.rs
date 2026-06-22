@@ -7,10 +7,6 @@ pub struct CFWorkerClient;
 
 #[async_trait]
 impl ProviderClient for CFWorkerClient {
-    fn provider(&self) -> Provider {
-        Provider::CFWorker
-    }
-
     async fn call(
         &self,
         req: &ProviderRequest,
@@ -30,10 +26,32 @@ impl ProviderClient for CFWorkerClient {
         status: u16,
         body: &str,
     ) -> bool {
-        status == 429
+        status == reqwest::StatusCode::TOO_MANY_REQUESTS
             || body.contains("RESOURCE_EXHAUSTED")
             || body.contains("quota")
             || body.contains("rate limit")
+    }
+    
+    fn is_auth_error(
+        &self,
+        status: u16,
+        body: &str,
+    ) -> bool {
+        status == reqwest::StatusCode::UNAUTHORIZED
+    }
+
+    fn provider(&self) -> Provider {
+        Provider::CFWorker
+    }
+
+    fn config(&self) -> ProviderConfig {
+        ProviderConfig {
+            reset_daily: true,
+            reset_monthly: false,
+            reset_time: Some(60),
+            daily_limit: Some(100000),
+            retry_after: 5,
+        }
     }
 }
 
@@ -54,7 +72,9 @@ impl CFWorkerClient {
 
 
                 let Some(account_id) = &credential.account_id else {
-                    return Err(ProviderError::InvalidAccount(format!("CFWorkerClient")));
+                    return Err(ProviderError::ClientUnauthorized {
+                        client: "CFWorkerClient".to_string(),
+                    });
                 };
 
                 let url = format!(
@@ -69,97 +89,41 @@ impl CFWorkerClient {
                     .send()
                     .await
                     .map_err(|e| {
-                        if e.is_timeout() {
-                            ProviderError::Timeout
-                        } else {
-                            ProviderError::Network(e.to_string())
+                        ProviderError::ClientResponse {
+                            client: "CFWorker".to_string(),
+                            error: e.to_string(),
                         }
                     })?;
-                
 
-                let status = res.status();
-
-                if status == reqwest::StatusCode::UNAUTHORIZED {
-                    let body = res.text().await.unwrap_or_default();
-
-                    return Err(
-                        ProviderError::InvalidApiKey(body)
-                    );
-                }
-
-                if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-                    let body = res.text().await.unwrap_or_default();
-
-                    return Err(
-                        ProviderError::QuotaExceeded {
-                            retry_after: 3600,
-                            body,
-                        }
-                    );
-                }
-
-                if status == reqwest::StatusCode::FORBIDDEN {
-                    let body = res.text().await.unwrap_or_default();
-
-                    if body.contains("RESOURCE_EXHAUSTED")
-                        || body.contains("quota")
-                        || body.contains("rate")
-                    {
-                        return Err(
-                            ProviderError::QuotaExceeded {
-                                retry_after: 3600,
-                                body,
-                            }
-                        );
-                    }
-
-                    return Err(
-                        ProviderError::InvalidApiKey(body)
-                    );
-                }
-
-                if !status.is_success() {
-                    let body = res.text().await.unwrap_or_default();
-
-                    return Err(
-                        ProviderError::Http {
-                            status: status.as_u16(),
-                            body,
-                        }
-                    );
-                }
-
-                let data: serde_json::Value = res
-                    .json()
-                    .await
-                    .map_err(|e| {
-                        ProviderError::InvalidResponse(
-                            format!("[CF Worker] Invalid JSON: {}", e)
-                        )
-                    })?;
-
+                let data: serde_json::Value =
+                    self.read_json(res).await?;
 
                 let b64: &str = data["result"]["image"]
                     .as_str()
                     .ok_or_else(|| {
-                        ProviderError::InvalidResponse(
-                            format!("[CF Worker] Failed to parse JSON: {}", data)
-                        )
+                        ProviderError::ClientResponse {
+                            client: "CFWorker".to_string(),
+                            error: "Invalid JSON".to_string(),
+                        }
                     })?;
 
                 let decode = base64::engine::general_purpose::STANDARD
                     .decode(b64)
                     .map_err(|e| {
-                        ProviderError::InvalidResponse(
-                            format!("[CF Worker] Failed to decode response: {}", e)
-                        )
+                        ProviderError::ClientResponse {
+                            client: "CFWorker".to_string(),
+                            error: e.to_string(),
+                        }
                     });
 
                 match decode {
                     Ok(bytes) => Ok(ProviderResponse::Bytes(bytes)),
-                    _ => Err(ProviderError::InvalidResponse(
-                            format!("[CF Worker] Failed to retrive")
-                        ))
+                    _ => Err(
+                        ProviderError::ClientResponse {
+                            client: "CFWorker".to_string(),
+                            error: "Invalid reponse type".to_string(),
+                        }
+                    )
                 }
             }
 

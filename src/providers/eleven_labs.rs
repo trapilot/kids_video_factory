@@ -6,10 +6,6 @@ pub struct ElevenLabsClient;
 
 #[async_trait]
 impl ProviderClient for ElevenLabsClient {
-    fn provider(&self) -> Provider {
-        Provider::ElevenLabs
-    }
-
     async fn call(
         &self,
         req: &ProviderRequest,
@@ -29,10 +25,33 @@ impl ProviderClient for ElevenLabsClient {
         status: u16,
         body: &str,
     ) -> bool {
-        status == 429
-            || body.contains("RESOURCE_EXHAUSTED")
-            || body.contains("quota")
+        status == reqwest::StatusCode::TOO_MANY_REQUESTS
+            || body.contains("quota_exceeded")
+            || body.contains("exceeds your quota")
             || body.contains("rate limit")
+    }
+    
+    fn is_auth_error(
+        &self,
+        status: u16,
+        body: &str,
+    ) -> bool {
+        status == reqwest::StatusCode::UNAUTHORIZED
+    }
+
+    
+    fn provider(&self) -> Provider {
+        Provider::ElevenLabs
+    }
+
+    fn config(&self) -> ProviderConfig {
+        ProviderConfig {
+            reset_daily: false,
+            reset_monthly: true,
+            reset_time: None,
+            daily_limit: None,
+            retry_after: 5,
+        }
     }
 }
 
@@ -68,77 +87,14 @@ impl ElevenLabsClient {
                     .send()
                     .await
                     .map_err(|e| {
-                        if e.is_timeout() {
-                            ProviderError::Timeout
-                        } else {
-                            ProviderError::Network(e.to_string())
+                        ProviderError::ClientResponse {
+                            client: "ElevenLabs".to_string(),
+                            error: e.to_string(),
                         }
                     })?;
                 
-
-                let status = res.status();
-
-                if status == reqwest::StatusCode::UNAUTHORIZED {
-                    let body = res.text().await.unwrap_or_default();
-
-                    return Err(
-                        ProviderError::InvalidApiKey(body)
-                    );
-                }
-
-                if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-                    let body = res.text().await.unwrap_or_default();
-
-                    return Err(
-                        ProviderError::QuotaExceeded {
-                            retry_after: 3600,
-                            body,
-                        }
-                    );
-                }
-
-                if status == reqwest::StatusCode::FORBIDDEN {
-                    let body = res.text().await.unwrap_or_default();
-
-                    if body.contains("RESOURCE_EXHAUSTED")
-                        || body.contains("quota")
-                        || body.contains("rate")
-                    {
-                        return Err(
-                            ProviderError::QuotaExceeded {
-                                retry_after: 3600,
-                                body,
-                            }
-                        );
-                    }
-
-                    return Err(
-                        ProviderError::InvalidApiKey(body)
-                    );
-                }
-
-                if !status.is_success() {
-                    let body = res.text().await.unwrap_or_default();
-
-                    return Err(
-                        ProviderError::Http {
-                            status: status.as_u16(),
-                            body,
-                        }
-                    );
-                }
-
-                let bytes = res
-                    .bytes()
-                    .await
-                    .map(|b| b.to_vec())
-                    .map_err(|e| e.to_string())
-                    .map_err(|e| {
-                        ProviderError::Http {
-                            status: 500,
-                            body: format!("failed to parse response: {}", e),
-                        }
-                    })?;
+                let bytes =
+                    self.read_bytes(res).await?;
 
                 Ok(ProviderResponse::Bytes(bytes))
             }

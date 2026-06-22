@@ -28,26 +28,14 @@ pub enum AgentError {
     #[error("Agent handoff job error: {0}")]
     Handoff(String),
 
-    #[error("Agent upload error: {0}")]
-    Upload(String),
-
-    #[error("Agent build timeline: {0}")]
-    BuildTimeline(String),
-
-    #[error("Agent render error: {0}")]
-    Render(String),
+    #[error("Agent execute error: {0}")]
+    Execute(String),
 
     #[error("Agent encode error: {0}")]
     Encode(String),
 
     #[error("Agent decode error: {0}")]
     Decode(String),
-
-    #[error("Agent unexpected response: {0}")]
-    UnexpectedResponse(String),
-
-    #[error("Agent acquire error: {0}")]
-    Acquire(String),
 }
 
 #[async_trait]

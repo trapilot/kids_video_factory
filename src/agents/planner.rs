@@ -12,7 +12,7 @@ pub struct PlannerAgent;
 #[async_trait]
 impl Agent for PlannerAgent {
     async fn run(&self, ctx: &workflow::Context, job: &Job) -> Result<(), AgentError> {
-        println!("🧠[Planner] Creating topic...");
+        println!("🧠 [Planner] Creating topic...");
 
         let main_char = Character::main_char();
         let spotlight_chars = Character::spotlight_chars()
@@ -94,10 +94,10 @@ impl Agent for PlannerAgent {
         );
         
 
-        let resp =
-            self
+        let resp = self
             .execute(&ctx, &system, &prompt)
-            .await?;
+            .await
+            .map_err(|e| AgentError::Execute(e.to_string()))?;
 
         let story_context: StoryContext =
             serde_json::from_str(&resp)
@@ -127,14 +127,12 @@ impl PlannerAgent {
         ctx: &workflow::Context,
         system: &str,
         prompt: &str,
-    ) -> Result<String, AgentError> {
+    ) -> Result<String, String> {
         let provider = &provider::Provider::Gemini;
         let guard = match ctx.pm.acquire(&provider).await {
             Some(v) => v,
             None => {
-                return Err(AgentError::Acquire(
-                    format!("{}", &provider.to_string())
-                ));
+                return Err(format!("{} is acquired", &provider.to_string()));
             }
         };
 
@@ -149,11 +147,11 @@ impl PlannerAgent {
         let rsp = guard
             .call(req)
             .await
-            .map_err(|e| AgentError::UnexpectedResponse(e.to_string()))?;
+            .map_err(|e| e.to_string())?;
 
         rsp
             .into_text()
-            .map_err(|e| AgentError::UnexpectedResponse(e.to_string()))
+            .map_err(|e| e.to_string())
         
     }
 }

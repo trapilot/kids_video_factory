@@ -3,8 +3,8 @@ use async_trait::async_trait;
 
 use crate::agent::*;
 use crate::models::*;
-use crate::entities::*;
 use crate::workflow;
+use crate::uploader;
 
 
 pub struct CleanerAgent;
@@ -14,7 +14,7 @@ impl Agent for CleanerAgent {
     async fn run(&self,  ctx: &workflow::Context, job: &Job) -> Result<(), AgentError> {
         println!("📤 [Cleaner] Cleaning the video...");
 
-        let publish_state: PublishState =
+        let publish_state: uploader::UploaderState =
             serde_json::from_str(&job.payload)
             .map_err(|e| AgentError::Decode(e.to_string()))?;
         

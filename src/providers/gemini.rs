@@ -6,10 +6,6 @@ pub struct GeminiClient;
 
 #[async_trait]
 impl ProviderClient for GeminiClient {
-    fn provider(&self) -> Provider {
-        Provider::Gemini
-    }
-
     async fn call(
         &self,
         req: &ProviderRequest,
@@ -20,7 +16,7 @@ impl ProviderClient for GeminiClient {
                 self.script(req, credential).await
             },
 
-            _ => Err(ProviderError::NotSupported(format!("{}", Self.provider().clone()))),
+            _ => Err(ProviderError::NotSupported(Self.provider().to_string())),
         }
     }
     
@@ -29,10 +25,33 @@ impl ProviderClient for GeminiClient {
         status: u16,
         body: &str,
     ) -> bool {
-        status == 429
-            || body.contains("RESOURCE_EXHAUSTED")
+        status == reqwest::StatusCode::TOO_MANY_REQUESTS
+            || body.contains("UNAVAILABLE")
             || body.contains("quota")
-            || body.contains("rate limit")
+            || body.contains("experiencing high demand")
+    }
+    
+    fn is_auth_error(
+        &self,
+        status: u16,
+        body: &str,
+    ) -> bool {
+        status == reqwest::StatusCode::UNAUTHORIZED
+    }
+
+    
+    fn provider(&self) -> Provider {
+        Provider::Gemini
+    }
+
+    fn config(&self) -> ProviderConfig {
+        ProviderConfig {
+            reset_daily: true,
+            reset_monthly: false,
+            reset_time: Some(60),
+            daily_limit: None,
+            retry_after: 5,
+        }
     }
 }
 
@@ -82,81 +101,23 @@ impl GeminiClient {
             .send()
             .await
             .map_err(|e| {
-                if e.is_timeout() {
-                    ProviderError::Timeout
-                } else {
-                    ProviderError::Network(e.to_string())
+                ProviderError::Http {
+                    status: 400,
+                    body: format!("Failed to call: {}", e.to_string()),
+                    provider: self.provider().to_string(),
                 }
             })?;
 
-        let status = res.status();
-
-        if status == reqwest::StatusCode::UNAUTHORIZED {
-            let body = res.text().await.unwrap_or_default();
-
-            return Err(
-                ProviderError::InvalidApiKey(body)
-            );
-        }
-
-        if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-            let body = res.text().await.unwrap_or_default();
-
-            return Err(
-                ProviderError::QuotaExceeded {
-                    retry_after: 3600,
-                    body,
-                }
-            );
-        }
-
-        if status == reqwest::StatusCode::FORBIDDEN {
-            let body = res.text().await.unwrap_or_default();
-
-            if body.contains("RESOURCE_EXHAUSTED")
-                || body.contains("quota")
-                || body.contains("rate")
-            {
-                return Err(
-                    ProviderError::QuotaExceeded {
-                        retry_after: 3600,
-                        body,
-                    }
-                );
-            }
-
-            return Err(
-                ProviderError::InvalidApiKey(body)
-            );
-        }
-
-        if !status.is_success() {
-            let body = res.text().await.unwrap_or_default();
-
-            return Err(
-                ProviderError::Http {
-                    status: status.as_u16(),
-                    body,
-                }
-            );
-        }
-
-        let data: serde_json::Value = res
-            .json()
-            .await
-            .map_err(|e| {
-                ProviderError::Http {
-                    status: 500,
-                    body: format!("invalid json: {}", e),
-                }
-            })?;
+        let data: serde_json::Value =
+            self.read_json(res).await?;
 
         let text = data["candidates"][0]["content"]["parts"][0]["text"]
             .as_str()
             .ok_or_else(|| {
                 ProviderError::Http {
                     status: 500,
-                    body: format!("failed to parse response: {}", data),
+                    body: format!("Failed to parse response: {}", data),
+                    provider: self.provider().to_string(),
                 }
             })?;
 

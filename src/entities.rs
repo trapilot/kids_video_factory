@@ -108,6 +108,7 @@ pub const EDU_CHARACTERS: &[Character] = &[
         catchphrase: "I want to try it!",
         speaking_style: "Very energetic, speaks quickly, asks many 'why' questions, expresses excitement openly.",
         visual_template: "a 3D Pixar style illustration of a cute Vietnamese boy age {age}, short black hair, bright curious eyes, yellow t-shirt, blue shorts, energetic pose, white background",
+        // visual_template: "A 3D Pixar style illustration of a cute Vietnamese boy, age {age}, short black hair, bright curious eyes, wearing a black sports cap with white trim on the brim and the word 'Hello!' written in white text with a small smile icon underneath. He is wearing a black sleeveless athletic tank top with white stripes on the shoulders, matching black sports shorts with white stripes down the sides and a prominent white Adidas logo on the left leg. On his feet, he wears a pair of red and grey athletic slide sandals with three bold white stripes across the wide red straps. He is standing in a confident pose with his arms crossed over his chest, isolated on a clean white background",
 
         strengths: "Curious, brave, friendly, imaginative, willing to help others.",
         weaknesses: "Impulsive, impatient, easily distracted, sometimes acts before thinking.",
@@ -201,34 +202,6 @@ pub const EDU_CHARACTERS: &[Character] = &[
         personality_prompt: "A caring elementary school teacher who loves her family and wants children to grow into kind people.",
     },
 ];
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct YoutubePayload {
-    pub title: String,
-    pub description: String,
-    pub tags: Vec<String>,
-    pub category_id: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct TiktokPayload {
-    pub title: String,
-    pub privacy_level: String,
-    pub disable_comment: bool,
-}
-
-#[derive(Debug, Default, Serialize, Deserialize, Clone)]
-pub struct PublishError {
-    pub youtube: Option<String>,
-    pub tiktok: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct PublishState {
-    pub all_uploaded: bool,
-    pub any_uploaded: bool,
-    pub errors: PublishError
-}
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct VideoMetadata {

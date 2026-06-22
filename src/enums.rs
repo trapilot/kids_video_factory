@@ -131,7 +131,7 @@ impl Transition {
 
     pub fn ffmpeg_name(&self) -> &'static str {
         match self {
-            Self::None => "",
+            Self::None => "fade",
             Self::Fade => "fade",
             Self::SlideLeft => "slideleft",
             Self::SlideRight => "slideright",

@@ -16,6 +16,21 @@ pub enum Provider {
     ElevenLabs,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct ProviderConfig {
+    pub daily_limit: Option<u32>,
+    pub retry_after: u64,
+    
+    // requests_per_minute: u64,
+    // tokens_per_minute: u64,
+    // requests_per_day: u64,
+
+    pub reset_daily: bool,
+    pub reset_monthly: bool,
+
+    pub reset_time: Option<u32>, // hour * 3600 + minutes * 60 + seconds,
+}
+
 pub struct ScriptRequest {
     pub system: String,
     pub prompt: String,
@@ -63,59 +78,59 @@ pub enum ProviderResponse {
 
 #[derive(Debug, Error)]
 pub enum ProviderError {
-    #[error("Provider http error {status}: {body}")]
-    Http { status: u16, body: String },
+    #[error("[{provider}] Provider http error {status} --> {body}")]
+    Http { provider: String, status: u16, body: String },
 
-    #[error("Provider quota exceeded retry after {retry_after}: {body}")]
-    QuotaExceeded { retry_after: u64, body: String },
+    #[error("[{provider}] Provider request exceeded {retry_after} --> {body}")]
+    RequestExceeded { provider: String, retry_after: u64, body: String },
 
-    #[error("Provider {0} invalid api keys")]
-    InvalidApiKey(String),
+    #[error("[{provider}] Provider invalid api keys --> {body}")]
+    RequestUnauthorized { provider: String, body: String },
 
-    #[error("Provider {0} invalid account")]
-    InvalidAccount(String),
+    #[error("[{0}] Provider all keys exhausted")]
+    AllKeysExhausted(String),
 
-    #[error("Provider {0} invalid response")]
-    InvalidResponse(String),
-    
-    #[error("Provider {0} not defined")]
-    NotFound(String),
+    #[error("[{provider}] Provider response error {error}")]
+    InvalidResponse { provider: String, error: String },
 
-    #[error("Provider {0} not support response type")]
+    #[error("Provider reponse not match")]
+    UnexpectedResponse,
+
+    #[error("[{0}] Provider does not support")]
     NotSupported(String),
 
-    #[error("Provider network error: {0}")]
-    Network(String),
+    #[error("[{client}] Provider client invalid api keys")]
+    ClientUnauthorized { client: String },
 
-    #[error("Provider network timeout")]
-    Timeout,
-
-    #[error("Provider unexpected response")]
-    UnexpectedResponse,
+    #[error("[{client}] Provider client response error {error}")]
+    ClientResponse { client: String, error: String },
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct ApiCredential {
     pub api_key: String,
     pub account_id: Option<String>,
 }
 
+#[derive(Debug)]
 pub struct ApiKeyState {
     pub credential: ApiCredential,
 
     pub daily_used: u32,
-    pub daily_limit: u32,
+    pub daily_limit: Option<u32>,
 
     pub blocked_until: u64,
     pub last_reset_day: u64,
 }
 
+#[derive(Debug)]
 pub struct CircuitBreaker {
     pub failure_count: u32,
     pub last_failure_time: u64,
     pub is_open: bool,
 }
 
+#[derive(Debug)]
 pub struct ProviderState {
     pub running: u32,
     pub maximum: u32,
@@ -127,8 +142,9 @@ pub struct ProviderState {
 }
 
 pub struct ProviderRuntime {
-    pub client: Arc<dyn ProviderClient>,
     pub state: ProviderState,
+    pub config: ProviderConfig,
+    pub client: Arc<dyn ProviderClient>,
 }
 
 #[derive(Clone)]
@@ -147,6 +163,7 @@ pub struct ProviderGuard {
 #[async_trait::async_trait]
 pub trait ProviderClient: Send + Sync {
     fn provider(&self) -> Provider;
+    fn config(&self) -> ProviderConfig;
 
     async fn call(
         &self,
@@ -154,7 +171,87 @@ pub trait ProviderClient: Send + Sync {
         credential: &ApiCredential,
     ) -> Result<ProviderResponse, ProviderError>;
 
+    fn is_auth_error(&self, status: u16, body: &str) -> bool;
     fn is_quota_error(&self, status: u16, body: &str) -> bool;
+
+    async fn read_json<T>(
+        &self,
+        res: reqwest::Response,
+    ) -> Result<T, ProviderError>
+    where
+        T: serde::de::DeserializeOwned,
+        Self: Sized,
+    {
+        let status = res.status();
+
+        let body = res.text().await.unwrap_or_default();
+
+        self.ensure_success(status, &body)?;
+
+        serde_json::from_str(&body).map_err(|e| {
+            ProviderError::InvalidResponse {
+                provider: self.provider().to_string(),
+                error: e.to_string(),
+            }
+        })
+    }
+
+    async fn read_bytes(
+        &self,
+        res: reqwest::Response,
+    ) -> Result<Vec<u8>, ProviderError>
+    {
+        let status = res.status();
+
+        let bytes = res.bytes().await.map_err(|e| {
+            ProviderError::InvalidResponse {
+                provider: self.provider().to_string(),
+                error: e.to_string(),
+            }
+        })?;
+
+        if !status.is_success() {
+            let body = String::from_utf8_lossy(&bytes);
+
+            self.ensure_success(status, &body)?;
+        }
+
+        Ok(bytes.to_vec())
+    }
+
+    fn ensure_success(
+        &self,
+        status: reqwest::StatusCode,
+        body: &str,
+    ) -> Result<(), ProviderError> {
+        let code = status.as_u16();
+
+        if self.is_auth_error(code, body) {
+            return Err(ProviderError::RequestUnauthorized {
+                provider: self.provider().to_string(),
+                body: body.to_string(),
+            });
+        }
+
+        if self.is_quota_error(code, body) {
+            let config = self.config();
+            return Err(ProviderError::RequestExceeded {
+                provider: self.provider().to_string(),
+                retry_after: config.retry_after,
+                body: body.to_string(),
+            });
+        }
+
+        if !status.is_success() {
+            return Err(ProviderError::Http {
+                provider: self.provider().to_string(),
+                status: code,
+                body: body.to_string(),
+            });
+        }
+
+        Ok(())
+    }
 }
 
 impl ProviderManager {
@@ -169,10 +266,12 @@ impl ProviderManager {
         client: Arc<dyn ProviderClient>,
         concurrency: u32,
         env_prefix: &str,
-        daily_limit: u32,
     ) {
         let provider = client.provider();
+        let config = client.config();
+
         let runtime = Arc::new(Mutex::new(ProviderRuntime {
+            config,
             client,
             state: ProviderState {
                 running: 0,
@@ -193,57 +292,49 @@ impl ProviderManager {
             map.insert(provider.clone(), runtime);
         }
 
-        self.load_keys_from_env(&provider, env_prefix, daily_limit).await;
+        self.load_keys_from_env(&provider, &config, env_prefix).await;
     }
 
     pub async fn acquire(&self, provider: &Provider) -> Option<ProviderGuard> {
-        println!("[ACQUIRE] Start the acquiring for Provider: **{}**", provider);
-
         loop {
-            // // Get the mutex specific to that provider using Read lock (without blocking others)
+            // Get the mutex specific to that provider using Read lock (without blocking others)
             let runtime_mutex = {
                 let map = self.inner.read().await;
                 map.get(provider).cloned()?
             };
             
             // Lock only the current provider's runtime
-            // println!("[LOCK-WAIT] Currently waiting for **{}** release...", provider);
             let mut runtime: tokio::sync::MutexGuard<'_, ProviderRuntime> = runtime_mutex.lock().await;
-            // println!("[LOCK-SUCCESS] Successfully acquired the key. (Mutex) of **{}**", provider);
 
             let client = runtime.client.clone();
             let state = &mut runtime.state;
+            
+            // #[cfg(debug_assertions)]
+            // println!("{:#?}", state);
 
             if state.circuit.is_open {
-                let elapsed = Self::now() - state.circuit.last_failure_time;
+                let elapsed = Self::now_day() - state.circuit.last_failure_time;
 
                 if elapsed < 60 {
-                    // println!("[CIRCUIT-OPEN] Provider **{}** The circuit is currently disconnected. (Circuit Breaker open). Reject the request.", provider);
                     return None;
                 }
 
-                // println!("[CIRCUIT-RETRY] ​​Try closing the circuit of **{}** after 60s...", provider);
                 state.circuit.is_open = false;
                 state.circuit.failure_count = 0;
             }
 
             if state.running >= state.maximum {
-                // println!(
-                //     "[THROTTLE] Provider **{}** has reached its maximum limit (Number of tasks: {}/{}). Will try again after 50ms...",
-                //     provider, state.running, state.maximum
-                // );
                 drop(runtime);
 
-                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                 continue;
             }
 
-            let now = Self::now();
+            let now = Self::now_day();
             let today = Self::current_day();
 
             let max_attempts = state.keys.len();
             if max_attempts == 0 {
-                println!("[ERROR] Provider **{}** has no API Key registered!", provider);
                 return None;
             }
 
@@ -251,6 +342,9 @@ impl ProviderManager {
                 let idx = state.next_index % max_attempts;
                 
                 state.next_index += 1;
+                if state.next_index >= max_attempts {
+                    state.next_index = 0;
+                }
 
                 let key = &mut state.keys[idx];
 
@@ -264,20 +358,27 @@ impl ProviderManager {
                     continue;
                 }
 
-                if key.daily_used >= key.daily_limit {
-                    continue;
+                if let Some(daily_limit) = key.daily_limit {
+                    if key.daily_used >= daily_limit {
+                        continue;
+                    }
                 }
+                
+                let credential = key.credential.clone();
 
                 key.daily_used += 1;
                 state.running += 1;
 
                 println!(
-                    "[SUCCESS] Suspension granted to **{}**! (Number of concurrently running tasks: {})",
-                    provider, state.running
+                    "[{}] acquired key: {} | used: {} | running: {}",
+                    provider.clone().to_string(),
+                    key.credential.clone().api_key.to_string(),
+                    key.daily_used.clone().to_string(),
+                    state.running.clone().to_string(),
                 );
                 return Some(ProviderGuard {
+                    credential,
                     provider: provider.clone(),
-                    credential: key.credential.clone(),
                     client: client.clone(),
                     manager: self.clone(),
                 });
@@ -298,7 +399,10 @@ impl ProviderManager {
 
         if let Some(mutex) = runtime_mutex {
             let mut runtime = mutex.lock().await;
+
             runtime.state.running = runtime.state.running.saturating_sub(1);
+            runtime.state.circuit.failure_count = 0;
+            runtime.state.circuit.is_open = false;
         }
     }
     
@@ -316,7 +420,7 @@ impl ProviderManager {
         if let Some(mutex) = runtime_mutex {
             let mut runtime = mutex.lock().await;
 
-            let now = Self::now();
+            let now = Self::now_day();
             
             if let Some(key) = runtime.state.keys.iter_mut().find(|k| k.credential.api_key == api_key) {
                 key.blocked_until = now + seconds;
@@ -343,32 +447,11 @@ impl ProviderManager {
         }
     }
 
-    async fn get_client(
-        &self,
-        provider: &Provider,
-    ) -> Option<Arc<dyn ProviderClient>> {
-        let map = self.inner.read().await;
-        let mutex = map.get(provider)?;
-        let runtime = mutex.lock().await;
-        Some(runtime.client.clone())
-    }
-
-    pub async fn add_keys(
-        &self,
-        provider: &Provider,
-        credentials: Vec<ApiCredential>,
-        daily_limit: u32,
-    ) {
-        for credential in credentials {
-            self.add_key(provider, credential, daily_limit).await;
-        }
-    }
-
     pub async fn add_key(
         &self,
         provider: &Provider,
+        config: &ProviderConfig,
         credential: ApiCredential,
-        daily_limit: u32,
     ) {
         let runtime_mutex = {
             let map = self.inner.read().await;
@@ -380,7 +463,7 @@ impl ProviderManager {
             runtime.state.keys.push(ApiKeyState {
                 credential,
                 daily_used: 0,
-                daily_limit,
+                daily_limit: config.daily_limit,
                 blocked_until: 0,
                 last_reset_day: Self::current_day(),
             });
@@ -410,7 +493,7 @@ impl ProviderManager {
         };
 
         let mut runtime = runtime_mutex.lock().await;
-        let now = Self::now();
+        let now = Self::now_day();
         let today = Self::current_day();
         let total = runtime.state.keys.len();
 
@@ -418,6 +501,9 @@ impl ProviderManager {
             let idx = runtime.state.next_index % total;
 
             runtime.state.next_index += 1;
+            if runtime.state.next_index >= total {
+                runtime.state.next_index = 0;
+            }
 
             let key = &mut runtime.state.keys[idx];
 
@@ -431,8 +517,10 @@ impl ProviderManager {
                 continue;
             }
 
-            if key.daily_used >= key.daily_limit {
-                continue;
+            if let Some(daily_limit) = key.daily_limit {
+                if key.daily_used >= daily_limit {
+                    continue;
+                }
             }
 
             key.daily_used += 1;
@@ -455,7 +543,7 @@ impl ProviderManager {
             let circuit = &mut runtime.state.circuit;
             
             circuit.failure_count += 1;
-            circuit.last_failure_time = Self::now();
+            circuit.last_failure_time = Self::now_day();
 
             if circuit.failure_count >= 5 {
                 circuit.is_open = true;
@@ -463,25 +551,11 @@ impl ProviderManager {
         }
     }
 
-    async fn reset_failures(&self, provider: &Provider) {
-        let runtime_mutex = {
-            let map = self.inner.read().await;
-            map.get(provider).cloned()
-        };
-
-        if let Some(mutex) = runtime_mutex {
-            let mut runtime = mutex.lock().await;
-
-            runtime.state.circuit.failure_count = 0;
-            runtime.state.circuit.is_open = false;
-        }
-    }
-
     async fn load_keys_from_env(
         &self,
         provider: &Provider,
+        config: &ProviderConfig,
         prefix: &str,
-        daily_limit: u32,
     ) {
         let mut i = 1;
         loop {
@@ -495,15 +569,15 @@ impl ProviderManager {
 
             self.add_key(
                 provider,
+                config,
                 ApiCredential { api_key, account_id },
-                daily_limit,
             ).await;
 
             i += 1;
         }
     }
 
-    fn now() -> u64 {
+    fn now_day() -> u64 {
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -511,13 +585,24 @@ impl ProviderManager {
     }
 
     fn current_day() -> u64 {
-        Self::now() / 86400
+        Self::now_day() / 86400
     }
     
     fn next_day_timestamp() -> u64 {
-        let now = Self::now();
+        let now = Self::now_day();
 
         ((now / 86400) + 1) * 86400
+    }
+}
+
+impl Drop for ProviderGuard {
+    fn drop(&mut self) {
+        let provider = self.provider.clone();
+        let manager = self.manager.clone();
+
+        tokio::spawn(async move {
+            manager.release(&provider).await;
+        });
     }
 }
 
@@ -538,16 +623,22 @@ impl ProviderGuard {
             };
 
             match self.client.call(&req, &credential).await {
-                Ok(v) => return Ok(v),
-                Err(ProviderError::QuotaExceeded { retry_after, .. }) => {
+                Ok(v) => {
+                    return Ok(v)
+                },
+                Err(ProviderError::RequestExceeded { retry_after, .. }) => {
                     self.manager.block_key(&self.provider, &credential.api_key, retry_after).await;
                     continue;
                 }
-                Err(e) => return Err(e),
+                Err(e) => {
+                    self.manager.record_failure(&self.provider).await;
+                    return Err(e)
+                },
             }
         }
 
-        Err(ProviderError::InvalidApiKey("all keys exhausted".into()))
+        println!("max_keys: {}", max_keys.to_string());
+        Err(ProviderError::AllKeysExhausted(self.provider.clone().to_string()))
     }
 
     fn backoff(attempt: u32) -> std::time::Duration {

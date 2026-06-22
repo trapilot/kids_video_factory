@@ -15,12 +15,25 @@ pub enum Channel {
     Tiktok,
 }
 
+#[derive(Debug, Default, Serialize, Deserialize, Clone)]
+pub struct UploaderError {
+    pub youtube: Option<String>,
+    pub tiktok: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct UploaderState {
+    pub all_uploaded: bool,
+    pub any_uploaded: bool,
+    pub errors: UploaderError
+}
+
 #[derive(Clone)]
 pub enum ChannelConfig {
     Youtube {
         category_id: String,
-        tags: Vec<String>,
         description: String,
+        tags: Vec<String>,
     },
     Tiktok {
         privacy_level: String,

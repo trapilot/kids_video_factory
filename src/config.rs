@@ -47,7 +47,7 @@ pub struct FeatureConfig {
 
 pub fn build_config() -> Config {
     Config {
-        workflow_per_day: 6,
+        workflow_per_day: 2,
         movie: MovieConfig {
             language: "English".to_string(),
             country: "Vietnam".to_string(),

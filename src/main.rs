@@ -3,8 +3,6 @@ mod agent;
 mod enums;
 mod config;
 mod models;
-mod helper;
-// mod producer;
 mod provider;
 mod uploader;
 mod entities;
@@ -28,24 +26,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     up.register(Arc::new(uploaders::YoutubeUploader::new())).await;
     pm.register_with_keys(
         Arc::new(providers::GeminiClient),
-        2,
+        1,
         "GEMINI",
-        1500,
     ).await;
     pm.register_with_keys(
         Arc::new(providers::CFWorkerClient),
-        2,
+        1,
         "CF_WORKER",
-        1500,
     ).await;
     pm.register_with_keys(
         Arc::new(providers::ElevenLabsClient),
-        2,
+        1,
         "ELEVEN_LABS",
-        1500,
     ).await;
 
-    db.revert_job("6ad98afc-4fab-445a-8a6f-5734695aa3c4").await?;
+    // db.revert_job("d1552fa0-7f00-4dc4-9baf-6767ad7b67fa").await?;
 
     let ctx = workflow::Context { db, pm, up, cfg };
     let workflow = workflow::Workflow::new(ctx);

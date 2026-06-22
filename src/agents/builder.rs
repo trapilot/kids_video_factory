@@ -14,7 +14,7 @@ pub struct BuilderAgent;
 #[async_trait]
 impl Agent for BuilderAgent {
     async fn run(&self,  ctx: &workflow::Context, job: &Job) -> Result<(), AgentError> {
-        println!("🔧[Builder] Generating assets...");
+        println!("🔧 [Builder] Generating assets...");
         
         let storyboard: Storyboard =
             serde_json::from_str(&job.payload)
@@ -27,7 +27,7 @@ impl Agent for BuilderAgent {
                 VoiceMode::SingleVoice
             )
             .await
-            .map_err(|e| AgentError::BuildTimeline(e.to_string()))?;
+            .map_err(|e| AgentError::Execute(e.to_string()))?;
 
         let payload = serde_json::to_string(&timeline)
             .map_err(|e| AgentError::Encode(e.to_string()))?;
@@ -81,7 +81,7 @@ impl BuilderAgent {
                 // VISUAL (Cloudflare)
                 // ======================
                 if !tokio::fs::try_exists(&visual_path).await.unwrap_or(false) {
-                    println!("🎬 [FFmpeg] Starting render visual {}", scene.scene_id);
+                    // println!("🎬 [FFmpeg] Starting render visual {}", scene.scene_id);
 
                     let req = provider::ProviderRequest::Image(provider::ImageRequest {
                         prompt: scene.visual_prompt,
@@ -111,7 +111,7 @@ impl BuilderAgent {
                             tokio::fs::write(&visual_path, image)
                                 .await
                                 .map_err(|e| e.to_string())?;
-                            println!("🎬 [FFmpeg] Render visual {} successful", scene.scene_id);
+                            // println!("🎬 [FFmpeg] Render visual {} successful", scene.scene_id);
                         }
                         Err(e) => {
                             println!("🎬 [FFmpeg] Render visual {} failed", scene.scene_id);
@@ -124,7 +124,7 @@ impl BuilderAgent {
                 // AUDIO (ElevenLabs)
                 // ======================
                 if !tokio::fs::try_exists(&audio_path).await.unwrap_or(false) {
-                    println!("🎬 [FFmpeg] Starting render audio {}", scene.scene_id);                
+                    // println!("🎬 [FFmpeg] Starting render audio {}", scene.scene_id);                
                     let mut audio_paths = Vec::new();
                     
                     let provider = provider::Provider::ElevenLabs;

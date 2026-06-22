@@ -5,7 +5,6 @@ use sqlx::SqlitePool;
 use crate::agent;
 use crate::enums::*;
 use crate::models::*;
-use crate::helper::*;
 
 
 pub const APP_VERSION: u8 = 1;
@@ -27,7 +26,7 @@ impl DbManager {
             .await?;
 
         if !db_exists {
-            sqlx::query(include_str!("./migrations/schema.sql"))
+            sqlx::query(include_str!("../migrations/schema.sql"))
                 .execute(&pool)
                 .await?;
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -254,7 +253,7 @@ impl DbManager {
     }
 
     pub async fn count_workflows_today(&self) -> Result<i64, sqlx::Error> {
-        let start = start_of_today_ts();
+        let start = self.start_of_today_ts();
 
         let count: (i64,) = sqlx::query_as(
             r#"
@@ -293,7 +292,7 @@ impl DbManager {
     }
 
     pub async fn get_recent_topics(&self, age: i32, days: u8) -> Result<Vec<String>, sqlx::Error> {
-        let since = start_of_recent_ts(days);
+        let since = self.start_of_recent_ts(days);
         let topics = sqlx::query_scalar::<_, String>(
             r#"
             SELECT topic
@@ -334,5 +333,23 @@ impl DbManager {
         .await?;
 
         Ok(exists > 0)
+    }
+
+    fn start_of_today_ts(&self) -> i64 {
+        let now = chrono::Utc::now();
+        let start = now.date_naive().and_hms_opt(0, 0, 0).unwrap();
+        start.and_utc().timestamp()
+    }
+
+    fn start_of_recent_ts(&self, days: u8) -> i64 {
+        let days_back = days.saturating_sub(1) as u64;
+        chrono::Utc::now()
+            .date_naive()
+            .checked_sub_days(chrono::Days::new(days_back))
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc()
+            .timestamp()
     }
 }
