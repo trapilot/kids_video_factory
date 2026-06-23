@@ -1,4 +1,5 @@
 use std::{collections::HashMap, sync::Arc};
+use serde::{Deserialize, Serialize};
 use warp::Filter;
 
 use crate::db::DbManager;

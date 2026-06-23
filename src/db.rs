@@ -3,7 +3,6 @@ use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::SqlitePool;
 
 use crate::agent;
-use crate::enums::*;
 use crate::models::*;
 
 

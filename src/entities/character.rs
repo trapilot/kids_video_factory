@@ -1,8 +1,5 @@
-use serde::{Deserialize, Serialize};
+
 use chrono::{Datelike, Utc};
-
-use crate::enums::*;
-
 
 pub struct Character {
     pub enabled: bool,
@@ -202,60 +199,3 @@ pub const EDU_CHARACTERS: &[Character] = &[
         personality_prompt: "A caring elementary school teacher who loves her family and wants children to grow into kind people.",
     },
 ];
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct VideoMetadata {
-    pub title: String,
-    pub video_path: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Timeline {
-    pub title: String,
-    pub clips: Vec<Clip>,
-    pub render_mode: RenderMode,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Storyboard {
-    pub title: String,
-    pub scenes: Vec<Scene>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Default, Clone)]
-pub struct StoryContext {
-    pub topic: String,
-    pub main_character: String,
-    pub spotlight_characters: Vec<String>,
-    pub supporting_characters: Vec<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Clip {
-    pub scene_id: u8,
-    pub audio_path: String,
-    pub visual_path: String,
-    pub start_time: f64,
-    pub end_time: f64,
-    pub duration: f64,
-    pub acrossfade: f64,
-    pub transition: Transition,
-    pub motion: Motion,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Scene {
-    pub scene_id: u8,
-    pub duration: u8,
-    pub motion: Motion,
-    pub transition: Transition,
-    pub visual_prompt: String,
-    pub voice_segments: Vec<VoiceSegment>
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct VoiceSegment {
-    pub text: String,
-    pub speaker: String,
-    pub voice_id: Option<String>,
-}

@@ -2,14 +2,21 @@
 use std::sync::Arc;
 use async_trait::async_trait;
 use tokio::io::AsyncWriteExt;
+use strum_macros::{Display, EnumString};
 
 use crate::AppState;
 use crate::agent::*;
-use crate::enums::*;
 use crate::models::*;
 use crate::entities::*;
 use crate::provider;
 
+
+
+#[derive(Debug, Clone, Display, EnumString)]
+pub enum VoiceMode {
+    PerSegment,
+    SingleVoice,
+}
 
 pub struct BuilderAgent;
 

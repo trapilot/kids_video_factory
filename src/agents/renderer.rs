@@ -1,14 +1,14 @@
 
 use std::sync::Arc;
-use async_trait::async_trait;
 use std::path;
+use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
+use strum_macros::{Display, EnumString};
 
 use crate::AppState;
 use crate::agent::*;
-use crate::enums::*;
 use crate::models::*;
 use crate::entities::*;
-
 
 pub struct RendererAgent;
 
@@ -233,5 +233,53 @@ impl RendererAgent {
             title: timeline.title.clone(),
             video_path: final_path.to_string()
         });
+    }
+}
+
+
+#[derive(Debug, Clone, Display, EnumString, Serialize, Deserialize)]
+#[strum(serialize_all = "lowercase")]
+#[serde(rename_all = "lowercase")]
+pub enum Motion {
+    None,
+    ZoomIn,
+    ZoomOut,
+    PanLeft,
+    PanRight,
+    PanUp,
+    PanDown,
+    KenBurns,
+    DollyIn,
+    DollyOut,
+}
+impl Motion {
+    pub const ALL: &'static [Motion] = &[
+        Motion::None,
+        Motion::ZoomIn,
+        Motion::ZoomOut,
+        Motion::PanLeft,
+        Motion::PanRight,
+        Motion::PanUp,
+        Motion::PanDown,
+        Motion::KenBurns,
+        Motion::DollyIn,
+        Motion::DollyOut,
+    ];
+
+    pub fn ffmpeg_filter(&self, duration_secs: f64) -> Option<String> {
+        let frames = (duration_secs * 25.0) as u32;
+
+        match self {
+            Motion::None => None,
+            Motion::ZoomIn => Some(format!("zoompan=z='min(zoom+0.001,1.3)':d={}", frames)),
+            Motion::ZoomOut => Some(format!("zoompan=z='max(1.0,1.3-on*0.001)':d={}", frames)),
+            Motion::PanLeft => Some(format!("zoompan=x='iw/2-(on*2)':z=1.1:d={}", frames)),
+            Motion::PanRight => Some(format!("zoompan=x='on*2':z=1.1:d={}", frames)),
+            Motion::PanUp => Some(format!("zoompan=y='ih/2-(on*2)':z=1.1:d={}", frames)),
+            Motion::PanDown => Some(format!("zoompan=y='on*2':z=1.1:d={}", frames)),
+            Motion::KenBurns => Some(format!("zoompan=z='min(zoom+0.0005,1.2)':x='on':y='on':d={}", frames)),
+            Motion::DollyIn => Some(format!("zoompan=z='min(zoom+0.001,1.5)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={}", frames)),
+            Motion::DollyOut => Some(format!("zoompan=z='max(1.0,1.5-on*0.002)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={}", frames)),
+        }
     }
 }

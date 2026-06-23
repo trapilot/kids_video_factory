@@ -1,19 +1,34 @@
 use serde::{Deserialize, Serialize};
+use strum_macros::{Display, EnumString};
 
-use crate::enums::*;
 use crate::agent;
 
 
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
-pub struct OAuthToken {
-    pub provider: String,
-    pub client_id: String,
-    pub client_secret: String,
-    pub access_token: Option<String>,
-    pub refresh_token: Option<String>,
-    pub auth_code: Option<String>,
-    pub expires_at: Option<i64>,
-    pub updated_at: i64,
+#[derive(Debug, Clone, Display, EnumString, Serialize, Deserialize, sqlx::Type)]
+#[strum(serialize_all = "lowercase")]
+#[serde(rename_all = "lowercase")]
+#[sqlx(rename_all = "lowercase", type_name = "text")]
+pub enum WorkflowStatus {
+    Pending,
+    Running,
+    Completed,
+    Failed,
+}
+
+#[derive(Debug, Clone, Display, EnumString, Serialize, Deserialize, sqlx::Type)]
+#[strum(serialize_all = "lowercase")]
+#[serde(rename_all = "lowercase")]
+#[sqlx(rename_all = "lowercase", type_name = "text")]
+pub enum JobStatus {
+    Pending,
+    Processing,
+    Completed,
+    Failed,
+}
+impl Default for JobStatus {
+    fn default() -> Self {
+        JobStatus::Pending
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]

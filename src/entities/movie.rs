@@ -1,46 +1,7 @@
+
 use serde::{Deserialize, Serialize};
 use strum_macros::{Display, EnumString};
 
-
-#[derive(Debug, Clone, Display, EnumString, Serialize, Deserialize, sqlx::Type)]
-#[strum(serialize_all = "lowercase")]
-#[serde(rename_all = "lowercase")]
-#[sqlx(rename_all = "lowercase", type_name = "text")]
-pub enum WorkflowStatus {
-    Pending,
-    Running,
-    Completed,
-    Failed,
-}
-
-#[derive(Debug, Clone, Display, EnumString, Serialize, Deserialize, sqlx::Type)]
-#[strum(serialize_all = "lowercase")]
-#[serde(rename_all = "lowercase")]
-#[sqlx(rename_all = "lowercase", type_name = "text")]
-pub enum JobStatus {
-    Pending,
-    Processing,
-    Completed,
-    Failed,
-}
-impl Default for JobStatus {
-    fn default() -> Self {
-        JobStatus::Pending
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum MediaType {
-    Image,
-    Video,
-    Audio,
-}
-
-#[derive(Debug, Clone, Display, EnumString)]
-pub enum VoiceMode {
-    PerSegment,
-    SingleVoice,
-}
 
 #[derive(Debug, Clone, Display, EnumString, Serialize, Deserialize)]
 #[strum(serialize_all = "lowercase")]
@@ -149,4 +110,62 @@ impl Transition {
             _ => Some(format!("[1:a]adelay={0}|{0}[a_delayed];[a_delayed]apad[aout]", adelay_ms)),
         }
     }
+}
+
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct VideoMetadata {
+    pub title: String,
+    pub video_path: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Timeline {
+    pub title: String,
+    pub clips: Vec<Clip>,
+    pub render_mode: RenderMode,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Storyboard {
+    pub title: String,
+    pub scenes: Vec<Scene>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+pub struct StoryContext {
+    pub topic: String,
+    pub main_character: String,
+    pub spotlight_characters: Vec<String>,
+    pub supporting_characters: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Clip {
+    pub scene_id: u8,
+    pub audio_path: String,
+    pub visual_path: String,
+    pub start_time: f64,
+    pub end_time: f64,
+    pub duration: f64,
+    pub acrossfade: f64,
+    pub transition: Transition,
+    pub motion: Motion,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Scene {
+    pub scene_id: u8,
+    pub duration: u8,
+    pub motion: Motion,
+    pub transition: Transition,
+    pub visual_prompt: String,
+    pub voice_segments: Vec<VoiceSegment>
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct VoiceSegment {
+    pub text: String,
+    pub speaker: String,
+    pub voice_id: Option<String>,
 }
