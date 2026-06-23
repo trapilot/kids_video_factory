@@ -1,9 +1,10 @@
 
+use std::sync::Arc;
 use async_trait::async_trait;
 
+use crate::AppState;
 use crate::agent::*;
 use crate::models::*;
-use crate::workflow;
 use crate::uploader;
 
 
@@ -11,7 +12,7 @@ pub struct CleanerAgent;
 
 #[async_trait]
 impl Agent for CleanerAgent {
-    async fn run(&self,  ctx: &workflow::Context, job: &Job) -> Result<(), AgentError> {
+    async fn run(&self, state: &Arc<AppState>, job: &Job) -> Result<(), AgentError> {
         println!("📤 [Cleaner] Cleaning the video...");
 
         let publish_state: uploader::UploaderState =
@@ -26,7 +27,7 @@ impl Agent for CleanerAgent {
             eprintln!("🔴 TikTok error: {}", err);
         }
 
-        ctx.db
+        state.services.db
             .complete_job(&job.id, "DONE".to_string())
             .await
             .map_err(|e| AgentError::Handoff(e.to_string()))?;

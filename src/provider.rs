@@ -370,11 +370,12 @@ impl ProviderManager {
                 state.running += 1;
 
                 println!(
-                    "[{}] acquired key: {} | used: {} | running: {}",
+                    "[{}] acquired key: {} | used: {} | running: {} | maximun: {}",
                     provider.clone().to_string(),
                     key.credential.clone().api_key.to_string(),
                     key.daily_used.clone().to_string(),
                     state.running.clone().to_string(),
+                    state.maximum.clone().to_string(),
                 );
                 return Some(ProviderGuard {
                     credential,
@@ -637,7 +638,6 @@ impl ProviderGuard {
             }
         }
 
-        println!("max_keys: {}", max_keys.to_string());
         Err(ProviderError::AllKeysExhausted(self.provider.clone().to_string()))
     }
 

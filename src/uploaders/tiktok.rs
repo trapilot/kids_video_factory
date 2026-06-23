@@ -1,3 +1,6 @@
+use std::sync::Arc;
+
+use crate::db::DbManager;
 use crate::uploader::*;
 
 pub struct TiktokUploader {
@@ -20,6 +23,7 @@ impl Uploader for TiktokUploader {
 
     async fn upload(
         &self,
+        db: &Arc<DbManager>,
         video_path: &str,
         title: &str,
         config: ChannelConfig

@@ -1,10 +1,11 @@
+use std::sync::Arc;
 use async_trait::async_trait;
 
+use crate::AppState;
 use crate::agent::*;
 use crate::enums::*;
 use crate::models::*;
 use crate::entities::*;
-use crate::workflow;
 use crate::provider;
 
 
@@ -12,7 +13,7 @@ pub struct WriterAgent;
 
 #[async_trait]
 impl Agent for WriterAgent {
-    async fn run(&self, ctx: &workflow::Context, job: &Job) -> Result<(), AgentError> {
+    async fn run(&self, state: &Arc<AppState>, job: &Job) -> Result<(), AgentError> {
         println!("✍️  [Writer] Generating video artifact...");
         
         let story_context: StoryContext =
@@ -28,7 +29,7 @@ impl Agent for WriterAgent {
             .map(|c| {
                 format!(
                     "- {}\n  Age: {}\n  Personality: {}\n  Role: {}\n  Relations: {}",
-                    c.name(&ctx.cfg.movie.language),
+                    c.name(&state.config.movie.language),
                     c.age(),
                     c.personality_prompt,
                     c.role,
@@ -43,7 +44,7 @@ impl Agent for WriterAgent {
             .map(|c| {
                 format!(
                     "- {}\n  Age: {}\n  Personality: {}\n  Role: {}\n  Relations: {}",
-                    c.name(&ctx.cfg.movie.language),
+                    c.name(&state.config.movie.language),
                     c.age(),
                     c.personality_prompt,
                     c.role,
@@ -58,7 +59,7 @@ impl Agent for WriterAgent {
             .map(|c| {
                 format!(
                     "- {}: {}",
-                    c.name(&ctx.cfg.movie.language),
+                    c.name(&state.config.movie.language),
                     c.personality_prompt
                 )
             })
@@ -151,8 +152,8 @@ impl Agent for WriterAgent {
             supporting_chars,
             scene_motions,
             scene_transitions,
-            ctx.cfg.movie.language,
-            ctx.cfg.movie.language,
+            state.config.movie.language,
+            state.config.movie.language,
         );
 
         let prompt = format!(r#"
@@ -185,7 +186,7 @@ impl Agent for WriterAgent {
             all_chars
         );
 
-        let resp = self.execute(&ctx, &system, &prompt)
+        let resp = self.execute(&state, &system, &prompt)
             .await
             .map_err(|e| AgentError::Execute(e.to_string()))?;
 
@@ -198,7 +199,7 @@ impl Agent for WriterAgent {
                 let voice_id = Character::find_char(&segment.speaker)
                     .and_then(|c| c.voice_id)
                     .map(str::to_owned)
-                    .unwrap_or_else(|| ctx.cfg.voice.base_voice.clone());
+                    .unwrap_or_else(|| state.config.voice.base_voice.clone());
 
                 segment.voice_id = Some(voice_id);
             }
@@ -208,7 +209,7 @@ impl Agent for WriterAgent {
             serde_json::to_string(&storyboard)
             .map_err(|e| AgentError::Encode(e.to_string()))?;
 
-        ctx.db
+        state.services.db
             .handoff_job(job, AgentType::Builder, payload)
             .await
             .map_err(|e| AgentError::Handoff(e.to_string()))?;
@@ -220,12 +221,12 @@ impl Agent for WriterAgent {
 impl WriterAgent {
     async fn execute(
         &self,
-        ctx: &workflow::Context,
+        state: &Arc<AppState>,
         system: &str,
         prompt: &str,
     ) -> Result<String, String> {
         let provider = &provider::Provider::Gemini;
-        let guard = match ctx.pm.acquire(&provider).await {
+        let guard = match state.services.providers.acquire(&provider).await {
             Some(v) => v,
             None => {
                 return Err(format!("{}", &provider.to_string()));

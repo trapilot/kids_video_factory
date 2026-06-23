@@ -5,8 +5,8 @@ use serde::{Deserialize, Serialize};
 use strum_macros::{Display, EnumString};
 use thiserror::Error;
 
+use crate::AppState;
 use crate::models;
-use crate::workflow;
 
 
 #[derive(Debug, Clone, Display, EnumString, Serialize, Deserialize, Eq, PartialEq, Hash, sqlx::Type)]
@@ -25,16 +25,16 @@ pub enum AgentType {
 
 #[derive(Debug, Error)]
 pub enum AgentError {
-    #[error("Agent handoff job error: {0}")]
+    #[error("Handoff job error: {0}")]
     Handoff(String),
 
-    #[error("Agent execute error: {0}")]
+    #[error("Execute error: {0}")]
     Execute(String),
 
-    #[error("Agent encode error: {0}")]
+    #[error("Encode error: {0}")]
     Encode(String),
 
-    #[error("Agent decode error: {0}")]
+    #[error("Decode error: {0}")]
     Decode(String),
 }
 
@@ -42,7 +42,7 @@ pub enum AgentError {
 pub trait Agent: Send + Sync {
     async fn run(
         &self,
-        ctx: &workflow::Context,
+        state: &Arc<AppState>,
         job: &models::Job,
     ) -> Result<(), AgentError>;
 }
@@ -61,7 +61,7 @@ impl AgentPool {
     pub fn try_spawn(
         &self,
         agent: Arc<dyn Agent>,
-        ctx: workflow::Context,
+        state: Arc<AppState>,
         job: models::Job,
     ) -> bool {
         let Ok(permit) = self.semaphore.clone().try_acquire_owned() else {
@@ -69,21 +69,21 @@ impl AgentPool {
         };
 
         let job_clone = job.clone();
-        let ctx_clone = ctx.clone();
+        let state_clone = state.clone();
 
         tokio::spawn(async move {
             let _permit = permit;
 
-            if let Err(e) = agent.run(&ctx, &job).await {
+            if let Err(e) = agent.run(&state_clone, &job).await {
                 eprintln!("❌ Agent {:?} failed job {} --> {}", job_clone.agent, job_clone.id, e);
                 
                 let retry_count = job_clone.retry_count;
                 let max_retry = job_clone.max_retry;
 
                 let db_result = if retry_count < max_retry {
-                    ctx_clone.db.retry_job(&job_clone.id, e.to_string()).await
+                    state_clone.services.db.retry_job(&job_clone.id, e.to_string()).await
                 } else {
-                    ctx_clone.db.fail_job(&job_clone.id, e.to_string()).await
+                    state_clone.services.db.fail_job(&job_clone.id, e.to_string()).await
                 };
 
                 match db_result {

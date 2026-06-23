@@ -1,19 +1,20 @@
 
+use std::sync::Arc;
 use async_trait::async_trait;
 use std::path;
 
+use crate::AppState;
 use crate::agent::*;
 use crate::enums::*;
 use crate::models::*;
 use crate::entities::*;
-use crate::workflow;
 
 
 pub struct RendererAgent;
 
 #[async_trait]
 impl Agent for RendererAgent {
-    async fn run(&self, ctx: &workflow::Context, job: &Job) -> Result<(), AgentError> {
+    async fn run(&self, state: &Arc<AppState>, job: &Job) -> Result<(), AgentError> {
         println!("🎥 [Renderer] Rendering video...");
         
         let timeline: Timeline =
@@ -29,7 +30,7 @@ impl Agent for RendererAgent {
             serde_json::to_string(&video_metadata)
             .map_err(|e| AgentError::Encode(e.to_string()))?;
 
-        ctx.db
+        state.services.db
             .handoff_job(job, AgentType::Publisher, payload)
             .await
             .map_err(|e| AgentError::Handoff(e.to_string()))?;
@@ -60,7 +61,7 @@ impl RendererAgent {
             if tokio::fs::try_exists(&video_path).await.unwrap_or(false) {
                 println!("🎬 [FFmpeg] Scene {} already rendered", clip.scene_id);
             } else {
-                println!("🎬 [FFmpeg] Starting render scene {}", clip.scene_id);
+                // println!("🎬 [FFmpeg] Starting render scene {}", clip.scene_id);
 
                 // Check input files
                 if !tokio::fs::try_exists(&clip.visual_path).await.unwrap_or(false) {

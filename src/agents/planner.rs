@@ -1,9 +1,10 @@
+use std::sync::Arc;
 use async_trait::async_trait;
 
+use crate::AppState;
 use crate::agent::*;
 use crate::models::*;
 use crate::entities::*;
-use crate::workflow;
 use crate::provider;
 
 
@@ -11,7 +12,7 @@ pub struct PlannerAgent;
 
 #[async_trait]
 impl Agent for PlannerAgent {
-    async fn run(&self, ctx: &workflow::Context, job: &Job) -> Result<(), AgentError> {
+    async fn run(&self, state: &Arc<AppState>, job: &Job) -> Result<(), AgentError> {
         println!("🧠 [Planner] Creating topic...");
 
         let main_char = Character::main_char();
@@ -19,7 +20,7 @@ impl Agent for PlannerAgent {
             .iter()
             .map(|c| format!(
                 "- {} ({})\n  Age: {}\n Personality: {}\n  Relations: {}",
-                c.name(&ctx.cfg.movie.language),
+                c.name(&state.config.movie.language),
                 c.topic_domain,
                 c.age(),
                 c.personality_prompt,
@@ -32,7 +33,7 @@ impl Agent for PlannerAgent {
             .iter()
             .map(|c| format!(
                 "- {} ({})\n  Age: {}\n Role: {}\n  Relations: {}",
-                c.name(&ctx.cfg.movie.language),
+                c.name(&state.config.movie.language),
                 c.profession,
                 c.age(),
                 c.role,
@@ -42,7 +43,7 @@ impl Agent for PlannerAgent {
             .join("\n");
         
         // Extract the history and pass it to the Task.
-        let history_list = ctx.db
+        let history_list = state.services.db
             .get_recent_topics(main_char.age(), 7)
             .await
             .unwrap_or_default();
@@ -67,7 +68,7 @@ impl Agent for PlannerAgent {
             6. Suitable for children aged in Spotlight Characters.
             7. Avoid repeating previous topics.
             "#,
-            ctx.cfg.movie.language,
+            state.config.movie.language,
         );
 
         let prompt = format!(r#"
@@ -95,7 +96,7 @@ impl Agent for PlannerAgent {
         
 
         let resp = self
-            .execute(&ctx, &system, &prompt)
+            .execute(&state, &system, &prompt)
             .await
             .map_err(|e| AgentError::Execute(e.to_string()))?;
 
@@ -107,12 +108,12 @@ impl Agent for PlannerAgent {
             serde_json::to_string(&story_context)
                 .map_err(|e| AgentError::Decode(e.to_string()))?;
 
-        ctx.db
+        state.services.db
             .handoff_job(job, AgentType::Writer, payload)
             .await
             .map_err(|e| AgentError::Handoff(e.to_string()))?;
 
-        ctx.db
+        state.services.db
             .save_topic(&job.workflow_id, story_context.topic.clone())
             .await
             .map_err(|e| AgentError::Handoff(e.to_string()))?;
@@ -124,12 +125,12 @@ impl Agent for PlannerAgent {
 impl PlannerAgent {
     async fn execute(
         &self,
-        ctx: &workflow::Context,
+        state: &Arc<AppState>,
         system: &str,
         prompt: &str,
     ) -> Result<String, String> {
         let provider = &provider::Provider::Gemini;
-        let guard = match ctx.pm.acquire(&provider).await {
+        let guard = match state.services.providers.acquire(&provider).await {
             Some(v) => v,
             None => {
                 return Err(format!("{} is acquired", &provider.to_string()));

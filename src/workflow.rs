@@ -2,31 +2,21 @@
 use std::sync::Arc;
 use std::collections::HashMap;
 
-use crate::db;
+use crate::AppState;
 use crate::agent;
-use crate::config;
 use crate::agents;
 use crate::entities;
-use crate::provider;
-use crate::uploader;
 
 
-#[derive(Clone)]
-pub struct Context {
-    pub db: Arc<db::DbManager>,
-    pub pm: Arc<provider::ProviderManager>,
-    pub up: Arc<uploader::UploaderManager>,
-    pub cfg: Arc<config::Config>,
-}
 
-pub struct Workflow {
-    ctx: Context,
+pub struct WorkflowEngine {
+    state: Arc<AppState>,
     pools: HashMap<agent::AgentType, agent::AgentPool>,
     agents: HashMap<agent::AgentType, Arc<dyn agent::Agent>>,
 }
 
-impl Workflow {
-    pub fn new(ctx: Context) -> Self {
+impl WorkflowEngine {
+    pub fn new(state: Arc<AppState>) -> Self {
         let mut pools = HashMap::new();
         let mut agents: HashMap<agent::AgentType, Arc<dyn agent::Agent>> = HashMap::new();
 
@@ -45,45 +35,48 @@ impl Workflow {
         agents.insert(agent::AgentType::Publisher, Arc::new(agents::PublisherAgent));
         agents.insert(agent::AgentType::Cleaner, Arc::new(agents::CleanerAgent));
         
-        Self { ctx, pools, agents }
+        Self { state, pools, agents }
     }
 
     pub async fn start(&self) {
         self.start_scheduler();
+
         self.dispatch().await;
     }
 
     async fn dispatch(&self) {
         loop {
-            let Ok(Some(job)) = self.ctx.db.claim_job().await else {
+            let Ok(Some(job)) = self.state.services.db.claim_job().await else {
                 tokio::time::sleep(tokio::time::Duration::from_millis(5000)).await;
                 continue;
             };
 
             let Some(agent) = self.agents.get(&job.agent) else {
-                let _ = self.ctx.db.revert_job(&job.id).await;
+                let _ = self.state.services.db.revert_job(&job.id).await;
                 continue;
             };
 
             let Some(pool) = self.pools.get(&job.agent) else {
-                let _ = self.ctx.db.revert_job(&job.id).await;
+                let _ = self.state.services.db.revert_job(&job.id).await;
                 continue;
             };
 
-            if !pool.try_spawn(agent.clone(), self.ctx.clone(), job.clone()) {
-                let _ = self.ctx.db.revert_job(&job.id).await;
+            if !pool.try_spawn(agent.clone(), self.state.clone(), job.clone()) {
+                let _ = self.state.services.db.revert_job(&job.id).await;
             }
         }
     }
 
     fn start_scheduler(&self) {
-        let db = self.ctx.db.clone();
-        let workflow_per_day = self.ctx.cfg.workflow_per_day;
-        let main_char = entities::Character::main_char();
-        
+        let state = self.state.clone();
+
         // 🔥 scheduler spawn
         tokio::spawn(async move {
             loop {
+                let db = &state.services.db;
+                let workflow_per_day = state.config.workflow_per_day;
+                let main_char = entities::Character::main_char();
+
                 let planner_busy =
                     db.agent_is_busy(agent::AgentType::Planner)
                     .await

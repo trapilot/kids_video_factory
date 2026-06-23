@@ -38,6 +38,7 @@ impl ProviderClient for CFWorkerClient {
         body: &str,
     ) -> bool {
         status == reqwest::StatusCode::UNAUTHORIZED
+            || body.contains("10000")
     }
 
     fn provider(&self) -> Provider {

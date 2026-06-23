@@ -15,8 +15,8 @@ pub struct DbManager {
 }
 impl DbManager {
     pub async fn new(db_url: &str) -> Result<Self, sqlx::Error> {
-        let db_exists = Path::new(db_url).exists();
-        if !db_exists {
+        let initialized = Path::new(db_url).exists();
+        if !initialized {
             std::fs::File::create(db_url).ok();
         }
 
@@ -25,14 +25,88 @@ impl DbManager {
             .connect(&format!("sqlite:{}?mode=rwc", db_url))
             .await?;
 
-        if !db_exists {
-            sqlx::query(include_str!("../migrations/schema.sql"))
+        if !initialized {
+            sqlx::query(include_str!("../migrations/schema_01.sql"))
                 .execute(&pool)
                 .await?;
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         }
 
+
+        // let now_date = chrono::Utc::now().date_naive();
+        // let schema01_date = chrono::NaiveDate::from_ymd_opt(2026, 1, 1).unwrap();
+        // if now_date <= schema01_date {}
+
         Ok(Self { pool })
+    }
+
+    pub async fn get_oauth_token(
+        &self,
+        provider: &str,
+    ) -> Result<Option<OAuthToken>, sqlx::Error> {
+        let token = sqlx::query_as::<_, OAuthToken>(
+            r#"
+            SELECT
+                provider,
+                client_id,
+                client_secret,
+                access_token,
+                refresh_token,
+                auth_code,
+                expires_at,
+                updated_at
+            FROM oauth_tokens
+            WHERE provider = ?
+            "#
+        )
+        .bind(provider)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(token)
+    }
+
+    pub async fn save_oauth_token(
+        &self,
+        token: &OAuthToken,
+    ) -> Result<Option<OAuthToken>, sqlx::Error> {
+        let auth_token = sqlx::query_as::<_, OAuthToken>(
+            r#"
+            INSERT INTO oauth_tokens (
+                provider,
+                client_id,
+                client_secret,
+                access_token,
+                refresh_token,
+                auth_code,
+                expires_at,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(provider)
+            DO UPDATE SET
+                client_id = excluded.client_id,
+                client_secret = excluded.client_secret,
+                access_token = excluded.access_token,
+                refresh_token = excluded.refresh_token,
+                auth_code = excluded.auth_code,
+                expires_at = excluded.expires_at,
+                updated_at = excluded.updated_at
+            RETURNING *
+            "#
+        )
+        .bind(&token.provider)
+        .bind(&token.client_id)
+        .bind(&token.client_secret)
+        .bind(&token.access_token)
+        .bind(&token.refresh_token)
+        .bind(&token.auth_code)
+        .bind(token.expires_at)
+        .bind(token.updated_at)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(auth_token)
     }
 
     pub async fn create_job(

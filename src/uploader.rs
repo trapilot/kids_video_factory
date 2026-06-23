@@ -5,6 +5,8 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use strum_macros::{Display, EnumString};
 
+use crate::db::DbManager;
+
 
 #[derive(Debug, Clone, Display, EnumString, Serialize, Deserialize, Eq, PartialEq, Hash)]
 #[strum(serialize_all = "lowercase")]
@@ -50,6 +52,7 @@ pub trait Uploader: Send + Sync {
 
     async fn upload(
         &self,
+        db: &Arc<DbManager>,
         video_path: &str,
         title: &str,
         config: ChannelConfig
@@ -73,6 +76,7 @@ impl UploaderManager {
 
     pub async fn upload_all(
         &self,
+        db: &Arc<DbManager>,
         path: &str,
         title: &str,
         configs: HashMap<Channel, ChannelConfig>
@@ -82,12 +86,13 @@ impl UploaderManager {
 
         for (channel, config) in configs {
             if let Some(uploader) = map.get(&channel) {
-                let uploader = uploader.clone();
+                let up = uploader.clone();
+                let db = db.clone();
                 let p = path.to_string();
                 let t = title.to_string();
                 
                 tasks.push(tokio::spawn(async move {
-                    (channel, uploader.upload(&p, &t, config).await)
+                    (channel, up.upload(&db, &p, &t, config).await)
                 }));
             }
         }

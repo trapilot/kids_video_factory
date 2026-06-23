@@ -1,18 +1,14 @@
-use crate::uploader::*;
+use std::sync::Arc;
 
-pub struct YoutubeUploader {
-    client_id: String,
-    client_secret: String,
-    refresh_token: String,
-}
+use crate::db::DbManager;
+use crate::uploader::*;
+use crate::oauth;
+
+pub struct YoutubeUploader;
 
 impl YoutubeUploader {
     pub fn new() -> Self {
-        Self {
-            client_id: std::env::var("YOUTUBE_CLIENT_ID").unwrap_or_default(),
-            client_secret: std::env::var("YOUTUBE_CLIENT_SECRET").unwrap_or_default(),
-            refresh_token: std::env::var("YOUTUBE_REFRESH_TOKEN").unwrap_or_default(),
-        }
+        Self { }
     }
 }
 
@@ -24,54 +20,60 @@ impl Uploader for YoutubeUploader {
     
     async fn upload(
         &self,
+        db: &Arc<DbManager>,
         video_path: &str,
         title: &str,
-        config: ChannelConfig
+        config: ChannelConfig,
     ) -> Result<(), String> {
         println!("Uploading Youtube");
-        
-        let metadata = match &config {
+
+        let oauth_token = oauth::get_youtube_token(&db)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let access_token = oauth_token
+            .access_token
+            .ok_or_else(|| "Missing youtube access token".to_string())?;
+
+        self.upload_internal(
+            video_path,
+            title,
+            &config,
+            &access_token,
+        )
+        .await
+    }
+}
+
+impl YoutubeUploader {
+    async fn upload_internal(
+        &self,
+        video_path: &str,
+        title: &str,
+        config: &ChannelConfig,
+        access_token: &str,
+    ) -> Result<(), String> {
+        let metadata = match config {
             ChannelConfig::Youtube {
                 category_id,
                 description,
                 tags,
-            } => {
-                serde_json::json!({
-                    "snippet": {
-                        "title": &title,
-                        "description": description,
-                        "tags": tags,
-                        "categoryId": category_id,
-                    },
-                    "status": {
-                        "privacyStatus": "public",
-                        "madeForKids": true,
-                        "selfDeclaredMadeForKids": true
-                    }
-                })
-            }
-            _ => {
-                return Err("Youtube config incorrect".to_string());
-            }
+            } => serde_json::json!({
+                "snippet": {
+                    "title": title,
+                    "description": description,
+                    "tags": tags,
+                    "categoryId": category_id,
+                },
+                "status": {
+                    "privacyStatus": "public",
+                    "madeForKids": true,
+                    "selfDeclaredMadeForKids": true
+                }
+            }),
+            _ => return Err("Youtube config incorrect".to_string()),
         };
 
-        let token_res = reqwest::Client::new()
-            .post("https://oauth2.googleapis.com/token")
-            .form(&[
-                ("client_id", self.client_id.to_string()),
-                ("client_secret", self.client_secret.to_string()),
-                ("refresh_token", self.refresh_token.to_string()),
-                ("grant_type", "refresh_token".to_string()),
-            ])
-            .send()
-            .await
-            .map_err(|e| e.to_string())?;
-
-        let token_json: serde_json::Value = token_res.json().await.map_err(|e| e.to_string())?;
-        let access_token = token_json["access_token"]
-            .as_str()
-            .ok_or("missing access token")?;
-        
         let video_bytes = tokio::fs::read(video_path)
             .await
             .map_err(|e| e.to_string())?;
@@ -79,17 +81,22 @@ impl Uploader for YoutubeUploader {
         let boundary = "foo_bar_baz";
 
         let mut full_body = Vec::new();
+
         full_body.extend(format!(
             "--{b}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n",
             b = boundary
         ).as_bytes());
+
         full_body.extend(serde_json::to_string(&metadata).unwrap().as_bytes());
         full_body.extend(b"\r\n");
+
         full_body.extend(format!(
             "--{b}\r\nContent-Type: video/mp4\r\n\r\n",
             b = boundary
         ).as_bytes());
+
         full_body.extend(&video_bytes);
+
         full_body.extend(format!("\r\n--{b}--\r\n", b = boundary).as_bytes());
 
         let res = reqwest::Client::new()
@@ -101,11 +108,14 @@ impl Uploader for YoutubeUploader {
             .await
             .map_err(|e| e.to_string())?;
 
-        if res.status().is_success() {
+        let status = res.status();
+        let text = res.text().await.map_err(|e| e.to_string())?;
+
+        if status.is_success() {
             println!("Youtube Upload OK!");
             Ok(())
         } else {
-            Err(res.status().to_string())
+            Err(format!("upload failed: {status}, body: {text}"))
         }
     }
 }

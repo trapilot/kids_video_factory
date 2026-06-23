@@ -1,11 +1,13 @@
 
+use std::sync::Arc;
 use async_trait::async_trait;
+use tokio::io::AsyncWriteExt;
 
+use crate::AppState;
 use crate::agent::*;
 use crate::enums::*;
 use crate::models::*;
 use crate::entities::*;
-use crate::workflow;
 use crate::provider;
 
 
@@ -13,7 +15,7 @@ pub struct BuilderAgent;
 
 #[async_trait]
 impl Agent for BuilderAgent {
-    async fn run(&self,  ctx: &workflow::Context, job: &Job) -> Result<(), AgentError> {
+    async fn run(&self, state: &Arc<AppState>, job: &Job) -> Result<(), AgentError> {
         println!("🔧 [Builder] Generating assets...");
         
         let storyboard: Storyboard =
@@ -21,7 +23,7 @@ impl Agent for BuilderAgent {
             .map_err(|e| AgentError::Decode(e.to_string()))?;
 
         let timeline: Timeline = self.execute(
-                &ctx,
+                &state,
                 &storyboard,
                 job.workflow_path(),
                 VoiceMode::SingleVoice
@@ -32,7 +34,7 @@ impl Agent for BuilderAgent {
         let payload = serde_json::to_string(&timeline)
             .map_err(|e| AgentError::Encode(e.to_string()))?;
 
-        ctx.db
+        state.services.db
             .handoff_job(job, AgentType::Renderer, payload)
             .await
             .map_err(|e| AgentError::Handoff(e.to_string()))?;
@@ -44,7 +46,7 @@ impl Agent for BuilderAgent {
 impl BuilderAgent {
     async fn execute(
         &self,
-        ctx: &workflow::Context,
+        state: &Arc<AppState>,
         storyboard: &Storyboard,
         target_path: String,
         voice_mode: VoiceMode
@@ -62,16 +64,13 @@ impl BuilderAgent {
 
         let mut handles = Vec::new();
 
-        let base_voice = &ctx.cfg.voice.base_voice;
-        let pm = &ctx.pm;
-
         for scene in storyboard.scenes.clone() {
             let voice_mode = voice_mode.clone();
             let audio_root = audio_root.clone();
             let visual_root = visual_root.clone();
 
-            let pm = pm.clone(); 
-            let base_voice = base_voice.clone();
+            let providers = state.services.providers.clone(); 
+            let config = state.config.clone();
 
             handles.push(tokio::spawn(async move {
                 let visual_path = format!("{}/scene_{}.png", visual_root, scene.scene_id);
@@ -85,14 +84,14 @@ impl BuilderAgent {
 
                     let req = provider::ProviderRequest::Image(provider::ImageRequest {
                         prompt: scene.visual_prompt,
-                        num_steps: Some(4),
-                        guidance: Some(3.5), 
+                        num_steps: Some(config.diffusion.num_steps),
+                        guidance: Some(config.diffusion.guidance), 
                         width: None,
                         height: None,
                     });
 
                     let provider = provider::Provider::CFWorker;
-                    let guard = match pm.acquire(&provider).await {
+                    let guard = match providers.acquire(&provider).await {
                         Some(v) => v,
                         None => {
                             return Err(format!("Provider not found: {}", &provider.to_string()));
@@ -123,98 +122,164 @@ impl BuilderAgent {
                 // ======================
                 // AUDIO (ElevenLabs)
                 // ======================
-                if !tokio::fs::try_exists(&audio_path).await.unwrap_or(false) {
-                    // println!("🎬 [FFmpeg] Starting render audio {}", scene.scene_id);                
-                    let mut audio_paths = Vec::new();
+                // if !tokio::fs::try_exists(&audio_path).await.unwrap_or(false) {
+                //     // println!("🎬 [FFmpeg] Starting render audio {}", scene.scene_id);                
+                //     let mut audio_paths = Vec::new();
                     
-                    let provider = provider::Provider::ElevenLabs;
-                    let guard = match pm.acquire(&provider).await {
-                        Some(v) => v,
-                        None => {
-                            return Err(format!("Provider not found: {}", &provider.to_string()));
-                        }
-                    };
+                //     let provider = provider::Provider::ElevenLabs;
+                //     let guard = match pm.acquire(&provider).await {
+                //         Some(v) => v,
+                //         None => {
+                //             return Err(format!("Provider not found: {}", &provider.to_string()));
+                //         }
+                //     };
+
+                //     match voice_mode {
+                //         VoiceMode::PerSegment => {
+                //             for (i, segment) in scene.voice_segments.iter().enumerate() {
+                //                 let req = provider::ProviderRequest::Audio(provider::AudioRequest {
+                //                     text: segment.text.clone(),
+                //                     voice_id: segment.voice_id.clone(),
+                //                     language: None,
+                //                     speed: None,
+                //                     stability: None,
+                //                     similarity_boost: None,
+                //                     format: Some(provider::AudioFormat::Wav),
+                //                 });
+
+                //                 let rsp = guard.clone()
+                //                     .call(req)
+                //                     .await
+                //                     .map_err(|e| e.to_string())?
+                //                     .into_bytes()
+                //                     .map_err(|e| e.to_string());
+
+                //                 match rsp {
+                //                     Ok(audio) => {
+                //                         let segment_path = format!("{}.tmp_{}", audio_path, i);
+
+                //                         tokio::fs::write(&segment_path, audio)
+                //                             .await
+                //                             .map_err(|e| e.to_string())?;
+
+                //                         audio_paths.push(segment_path);
+                //                     },
+
+                //                     Err(e) => {
+                //                         return Err(e.to_string());
+                //                     }
+                //                 }
+                //             }
+                //         }
+
+                //         VoiceMode::SingleVoice => {
+                //             let text =
+                //                 scene.voice_segments
+                //                 .iter()
+                //                 .map(|v| v.text.as_str())
+                //                 .collect::<Vec<_>>()
+                //                 .join("\n");
+
+                //             let req = provider::ProviderRequest::Audio(provider::AudioRequest {
+                //                 text: text,
+                //                 voice_id: Some(base_voice),
+                //                 language: None,
+                //                 speed: None,
+                //                 stability: None,
+                //                 similarity_boost: None,
+                //                 format: Some(provider::AudioFormat::Wav),
+                //             });
+
+                //             let rsp = guard.clone()
+                //                 .call(req)
+                //                 .await
+                //                 .map_err(|e| e.to_string())?
+                //                 .into_bytes()
+                //                 .map_err(|e| e.to_string());
+
+                //             match rsp {
+                //                 Ok(audio) => {
+                //                     tokio::fs::write(&audio_path, audio)
+                //                         .await
+                //                         .map_err(|e| e.to_string())?;
+                //                 },
+
+                //                 Err(e) => {
+                //                     return Err(e.to_string());
+                //                 }
+                //             };
+                //         }
+                //     }
+
+                //     if audio_paths.len() > 0 {
+                //         let list_path = format!("{}.list", audio_path);
+                    
+                //         let list_content = audio_paths
+                //             .iter()
+                //             .map(|p| format!("file '{}'\n", p))
+                //             .collect::<String>();
+
+                //         tokio::fs::write(&list_path, list_content)
+                //             .await
+                //             .map_err(|e| e.to_string())?;
+
+                //         let status = tokio::process::Command::new("ffmpeg")
+                //             .args([
+                //                 "-y",
+                //                 "-f", "concat",
+                //                 "-safe", "0",
+                //                 "-i", &list_path,
+                //                 "-c", "copy",
+                //                 &audio_path,
+                //             ])
+                //             .status()
+                //             .await
+                //             .map_err(|e| e.to_string())?;
+
+                //         if !status.success() {
+                //             return Err(format!("Failed to merge audios for scene {}", audio_path));
+                //         }
+                //     }
+                // }
+
+                if !tokio::fs::try_exists(&audio_path).await.unwrap_or(false) {
+                    let mut audio_paths = Vec::new();
 
                     match voice_mode {
                         VoiceMode::PerSegment => {
                             for (i, segment) in scene.voice_segments.iter().enumerate() {
-                                let req = provider::ProviderRequest::Audio(provider::AudioRequest {
-                                    text: segment.text.clone(),
-                                    voice_id: segment.voice_id.clone(),
-                                    language: None,
-                                    speed: None,
-                                    stability: None,
-                                    similarity_boost: None,
-                                    format: Some(provider::AudioFormat::Wav),
-                                });
+                                let segment_path =
+                                    format!("{}.tmp_{}.wav", audio_path, i);
 
-                                let rsp = guard.clone()
-                                    .call(req)
-                                    .await
-                                    .map_err(|e| e.to_string())?
-                                    .into_bytes()
-                                    .map_err(|e| e.to_string());
+                                piper_tts(
+                                    &segment.text,
+                                    &segment_path,
+                                )
+                                .await?;
 
-                                match rsp {
-                                    Ok(audio) => {
-                                        let segment_path = format!("{}.tmp_{}", audio_path, i);
-
-                                        tokio::fs::write(&segment_path, audio)
-                                            .await
-                                            .map_err(|e| e.to_string())?;
-
-                                        audio_paths.push(segment_path);
-                                    },
-
-                                    Err(e) => {
-                                        return Err(e.to_string());
-                                    }
-                                }
+                                audio_paths.push(segment_path);
                             }
                         }
 
                         VoiceMode::SingleVoice => {
-                            let text =
-                                scene.voice_segments
+                            let text = scene
+                                .voice_segments
                                 .iter()
                                 .map(|v| v.text.as_str())
                                 .collect::<Vec<_>>()
                                 .join("\n");
 
-                            let req = provider::ProviderRequest::Audio(provider::AudioRequest {
-                                text: text,
-                                voice_id: Some(base_voice),
-                                language: None,
-                                speed: None,
-                                stability: None,
-                                similarity_boost: None,
-                                format: Some(provider::AudioFormat::Wav),
-                            });
-
-                            let rsp = guard.clone()
-                                .call(req)
-                                .await
-                                .map_err(|e| e.to_string())?
-                                .into_bytes()
-                                .map_err(|e| e.to_string());
-
-                            match rsp {
-                                Ok(audio) => {
-                                    tokio::fs::write(&audio_path, audio)
-                                        .await
-                                        .map_err(|e| e.to_string())?;
-                                },
-
-                                Err(e) => {
-                                    return Err(e.to_string());
-                                }
-                            };
+                            piper_tts(
+                                &text,
+                                &audio_path,
+                            )
+                            .await?;
                         }
                     }
 
-                    if audio_paths.len() > 0 {
+                    if !audio_paths.is_empty() {
                         let list_path = format!("{}.list", audio_path);
-                    
+
                         let list_content = audio_paths
                             .iter()
                             .map(|p| format!("file '{}'\n", p))
@@ -238,7 +303,10 @@ impl BuilderAgent {
                             .map_err(|e| e.to_string())?;
 
                         if !status.success() {
-                            return Err(format!("Failed to merge audios for scene {}", audio_path));
+                            return Err(format!(
+                                "Failed to merge audios for scene {}",
+                                scene.scene_id
+                            ));
                         }
                     }
                 }
@@ -331,4 +399,41 @@ impl BuilderAgent {
         let s = String::from_utf8_lossy(&output.stdout);
         s.trim().parse::<f64>().map_err(|e| e.to_string())
     }
+}
+
+async fn piper_tts(
+    text: &str,
+    output: &str,
+) -> Result<(), String> {
+    let model = "./tools/models/en_US-lessac-medium.onnx";
+    let piper_bin = "./tools/piper/piper";
+
+    // println!("cwd: {:?}", std::env::current_dir());
+    // println!("piper exists: {}", std::path::Path::new(piper_bin).exists());
+    // println!("model exists: {}", std::path::Path::new(model).exists());
+
+    let mut child = tokio::process::Command::new(piper_bin)
+        .args([
+            "--model", model,
+            "--output_file", output,
+        ])
+        .stdin(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Piper spawn --> {}", e.to_string()))?;
+
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin
+            .write_all(text.as_bytes())
+            .await
+            .map_err(|e| format!("Piper running --> {}", e.to_string()))?;
+    }
+
+    let status = child.wait().await.map_err(|e| e.to_string())?;
+
+    if !status.success() {
+        return Err("Piper synthesis failed".into());
+    }
+
+    Ok(())
 }

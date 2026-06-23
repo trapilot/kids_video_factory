@@ -33,6 +33,17 @@ CREATE TABLE IF NOT EXISTS `providers` (
     `blocked_until` INTEGER DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS `oauth_tokens` (
+    `provider` TEXT PRIMARY KEY,
+    `client_id` TEXT NOT NULL,
+    `client_secret` TEXT NOT NULL,
+    `access_token` TEXT,
+    `refresh_token` TEXT,
+    `auth_code` TEXT,
+    `expires_at` INTEGER,
+    `updated_at` INTEGER NOT NULL
+);
+
 
 CREATE INDEX `idx_workflow_age_status` ON `workflows`(`age`, `status`);
 
