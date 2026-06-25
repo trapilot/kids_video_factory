@@ -5,37 +5,86 @@ use std::collections::HashMap;
 use crate::AppState;
 use crate::agent;
 use crate::agents;
+use crate::models;
 use crate::entities;
 
 
+struct AgentEntry {
+    pool: agent::AgentPool,
+    agent: Arc<dyn agent::Agent>,
+}
 
 pub struct WorkflowEngine {
     state: Arc<AppState>,
-    pools: HashMap<agent::AgentType, agent::AgentPool>,
-    agents: HashMap<agent::AgentType, Arc<dyn agent::Agent>>,
+    registry: HashMap<agent::AgentType, AgentEntry>,
+}
+
+impl AgentEntry {
+    pub fn try_spawn(
+        &self,
+        state: Arc<AppState>,
+        job: models::Job,
+    ) -> bool {
+        self.pool
+            .try_spawn(self.agent.clone(), state, job)
+    }
 }
 
 impl WorkflowEngine {
     pub fn new(state: Arc<AppState>) -> Self {
-        let mut pools = HashMap::new();
-        let mut agents: HashMap<agent::AgentType, Arc<dyn agent::Agent>> = HashMap::new();
+        let mut registry = HashMap::new();
 
-        pools.insert(agent::AgentType::Manager, agent::AgentPool::new(1));
-        pools.insert(agent::AgentType::Planner, agent::AgentPool::new(1));
-        pools.insert(agent::AgentType::Writer, agent::AgentPool::new(1));
-        pools.insert(agent::AgentType::Builder, agent::AgentPool::new(1));
-        pools.insert(agent::AgentType::Renderer, agent::AgentPool::new(1));
-        pools.insert(agent::AgentType::Publisher, agent::AgentPool::new(1));
-
-        agents.insert(agent::AgentType::Manager, Arc::new(agents::ManagerAgent));
-        agents.insert(agent::AgentType::Planner, Arc::new(agents::PlannerAgent));
-        agents.insert(agent::AgentType::Writer, Arc::new(agents::WriterAgent));
-        agents.insert(agent::AgentType::Builder, Arc::new(agents::BuilderAgent));
-        agents.insert(agent::AgentType::Renderer, Arc::new(agents::RendererAgent));
-        agents.insert(agent::AgentType::Publisher, Arc::new(agents::PublisherAgent));
-        agents.insert(agent::AgentType::Cleaner, Arc::new(agents::CleanerAgent));
+        registry.insert(
+            agent::AgentType::Manager,
+            AgentEntry {
+                pool: agent::AgentPool::new(1),
+                agent: Arc::new(agents::ManagerAgent),
+            },
+        );
+        registry.insert(
+            agent::AgentType::Planner,
+            AgentEntry {
+                pool: agent::AgentPool::new(1),
+                agent: Arc::new(agents::PlannerAgent),
+            },
+        );
+        registry.insert(
+            agent::AgentType::Writer,
+            AgentEntry {
+                pool: agent::AgentPool::new(1),
+                agent: Arc::new(agents::WriterAgent),
+            },
+        );
+        registry.insert(
+            agent::AgentType::Builder,
+            AgentEntry {
+                pool: agent::AgentPool::new(1),
+                agent: Arc::new(agents::BuilderAgent),
+            },
+        );
+        registry.insert(
+            agent::AgentType::Renderer,
+            AgentEntry {
+                pool: agent::AgentPool::new(1),
+                agent: Arc::new(agents::RendererAgent),
+            },
+        );
+        registry.insert(
+            agent::AgentType::Publisher,
+            AgentEntry {
+                pool: agent::AgentPool::new(1),
+                agent: Arc::new(agents::PublisherAgent),
+            },
+        );
+        registry.insert(
+            agent::AgentType::Cleaner,
+            AgentEntry {
+                pool: agent::AgentPool::new(1),
+                agent: Arc::new(agents::CleanerAgent),
+            },
+        );
         
-        Self { state, pools, agents }
+        Self { state, registry }
     }
 
     pub async fn start(&self) {
@@ -47,23 +96,21 @@ impl WorkflowEngine {
     async fn dispatch(&self) {
         loop {
             let Ok(Some(job)) = self.state.services.db.claim_job().await else {
-                tokio::time::sleep(tokio::time::Duration::from_millis(5000)).await;
+                tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
                 continue;
             };
 
-            let Some(agent) = self.agents.get(&job.agent) else {
+            let Some(entry) = self.registry.get(&job.agent) else {
                 let _ = self.state.services.db.revert_job(&job.id).await;
+                tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
                 continue;
             };
 
-            let Some(pool) = self.pools.get(&job.agent) else {
-                let _ = self.state.services.db.revert_job(&job.id).await;
-                continue;
-            };
-
-            if !pool.try_spawn(agent.clone(), self.state.clone(), job.clone()) {
+            if !entry.try_spawn(self.state.clone(), job.clone()) {
                 let _ = self.state.services.db.revert_job(&job.id).await;
             }
+
+            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
         }
     }
 

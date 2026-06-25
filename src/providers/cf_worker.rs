@@ -69,6 +69,7 @@ impl CFWorkerClient {
                     "prompt": prompt,
                     "num_steps": num_steps,
                     "guidance": guidance,
+                    "negative_prompt": "low quality, blurry, distorted face",
                 });
 
 

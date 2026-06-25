@@ -34,17 +34,17 @@ impl AppState {
         let providers = Arc::new(provider::ProviderManager::new());
         providers.register_with_keys(
             Arc::new(providers::GeminiClient),
-            1,
+            2,
             "GEMINI",
         ).await;
         providers.register_with_keys(
             Arc::new(providers::CFWorkerClient),
-            1,
+            10,
             "CF_WORKER",
         ).await;
         providers.register_with_keys(
             Arc::new(providers::ElevenLabsClient),
-            1,
+            2,
             "ELEVEN_LABS",
         ).await;
 

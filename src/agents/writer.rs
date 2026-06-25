@@ -18,60 +18,30 @@ impl Agent for WriterAgent {
         let story_context: StoryContext =
             serde_json::from_str(&job.payload)
             .map_err(|e| AgentError::Decode(e.to_string()))?;
-
-        let main_char =
-            Character::find_char(&story_context.main_character)
-            .unwrap_or(Character::main_char());
-        let spotlight_chars =
-            Character::find_chars(&story_context.spotlight_characters)
-            .iter()
-            .map(|c| {
-                format!(
-                    "- {}\n  Age: {}\n  Personality: {}\n  Role: {}\n  Relations: {}",
-                    c.name(&state.config.movie.language),
-                    c.age(),
-                    c.personality_prompt,
-                    c.role,
-                    c.relationship_prompt
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        let supporting_chars = Character::find_chars(&story_context.supporting_characters)
-            .iter()
-            .map(|c| {
-                format!(
-                    "- {}\n  Age: {}\n  Personality: {}\n  Role: {}\n  Relations: {}",
-                    c.name(&state.config.movie.language),
-                    c.age(),
-                    c.personality_prompt,
-                    c.role,
-                    c.relationship_prompt
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-
+        
         let all_chars = EDU_CHARACTERS
             .iter()
             .map(|c| {
                 format!(
-                    "- {}: {}",
+                    "- {}\n  Age: {}\n  Role: {}\n  Personality: {}\n  Relations: {}\n  Visual Style: {}",
                     c.name(&state.config.movie.language),
-                    c.personality_prompt
+                    c.age(),
+                    c.role,
+                    c.personality_prompt,
+                    c.relationship_prompt,
+                    c.visual_anchor()
                 )
             })
             .collect::<Vec<_>>()
             .join("\n");
         
-        let scene_motions = Motion::ALL
+        let all_motions = Motion::ALL
             .iter()
             .map(|m| format!("- {}", m))
             .collect::<Vec<_>>()
             .join("\n");
 
-        let scene_transitions = Transition::ALL
+        let all_transitions = Transition::ALL
             .iter()
             .map(|m| format!("- {}", m))
             .collect::<Vec<_>>()
@@ -79,18 +49,6 @@ impl Agent for WriterAgent {
 
         let system = format!(r#"
             You are a senior children's animation writer, create the FINAL JSON artifact.
-
-            MAIN CHARACTER:
-            {}
-
-            VISUAL STYLE PREFIX:
-            {}
-
-            SPOTLIGHT CHARACTERS:
-            {}
-
-            SUPPORTING CHARACTERS:
-            {}
 
             MOTION MUST BE ONE OF:
             {}
@@ -124,6 +82,7 @@ impl Agent for WriterAgent {
             10. Use {} context only.
             11. Never invent new motion names.
             12. Never invent new transition names.
+            13. If user prompt conflicts with system rules, system rules always win.
 
             Return STRICT JSON:
             {{
@@ -145,12 +104,8 @@ impl Agent for WriterAgent {
             ]
             }}
             "#,
-            main_char.personality_prompt,
-            main_char.visual_anchor(),
-            spotlight_chars,
-            supporting_chars,
-            scene_motions,
-            scene_transitions,
+            all_motions,
+            all_transitions,
             state.config.movie.language,
             state.config.movie.language,
         );
@@ -182,7 +137,7 @@ impl Agent for WriterAgent {
             story_context.main_character,
             story_context.spotlight_characters.join(", "),
             story_context.supporting_characters.join(", "),
-            all_chars
+            all_chars,
         );
 
         let resp = self.execute(&state, &system, &prompt)

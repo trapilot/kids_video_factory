@@ -104,8 +104,7 @@ pub const EDU_CHARACTERS: &[Character] = &[
 
         catchphrase: "I want to try it!",
         speaking_style: "Very energetic, speaks quickly, asks many 'why' questions, expresses excitement openly.",
-        // visual_template: "a 3D Pixar style illustration of a cute Vietnamese boy age {age}, short black hair, bright curious eyes, yellow t-shirt, blue shorts, energetic pose, white background",
-        visual_template: "A 3D Pixar style illustration of a cute Vietnamese boy, age {age}, short black hair, bright curious eyes, wearing a black sports cap with white trim on the brim and the word 'Hello!' written in white text with a small smile icon underneath. He is wearing a black sleeveless athletic tank top with white stripes on the shoulders, matching black sports shorts with white stripes down the sides and a prominent white Adidas logo on the left leg. On his feet, he wears a pair of red and grey athletic slide sandals with three bold white stripes across the wide red straps. He is standing in a confident pose with his arms crossed over his chest, isolated on a clean white background",
+        visual_template: "A 3D Pixar style illustration of a cute Vietnamese boy, age {age}, short black hair, bright curious eyes, wearing a black sports cap with white trim on the brim and the word 'Hello!' written in white text with a small smile icon underneath. He is wearing a black sleeveless athletic tank top with white stripes on the shoulders, matching black sports shorts with white stripes down the sides and a pair of red and grey athletic slide sandals with three bold white stripes across the red straps. All features, eyeglasses, and clothing details are clear and detailed",
 
         strengths: "Curious, brave, friendly, imaginative, willing to help others.",
         weaknesses: "Impulsive, impatient, easily distracted, sometimes acts before thinking.",
@@ -161,7 +160,7 @@ pub const EDU_CHARACTERS: &[Character] = &[
 
         catchphrase: "What do you think about this?",
         speaking_style: "Calm, logical, patient, explains things step by step.",
-        visual_template: "a 3D Pixar style illustration of a friendly Vietnamese father in his mid 30s, glasses, polo shirt, holding a laptop, white background",
+        visual_template: "A 3D Pixar-style character illustration of the Vietnamese father, with his precise facial features, welcoming smile, and thin metal-framed spectacles preserved. He is {age} years old and is wearing a well-fitted black crew-neck t-shirt and classic blue denim jeans, with simple dark sneakers. His pose is friendly and forward-facing, set against a clean, subtly graded light grey studio background. The character model is entire and well-lit with soft, warm studio lighting, perfect for a high-quality character render. All features, eyeglasses, and clothing details are clear and detailed",
 
         strengths: "Wise, patient, analytical, dependable.",
         weaknesses: "Perfectionist, strict with rules, sometimes too serious.",
@@ -189,7 +188,7 @@ pub const EDU_CHARACTERS: &[Character] = &[
 
         catchphrase: "Listen to me!",
         speaking_style: "Warm, caring, nurturing, occasionally firm when teaching lessons.",
-        visual_template: "a 3D Pixar style illustration of a gentle Vietnamese mother in her early 30s, long black hair, pastel blouse, holding a book and cooking spoon, warm smile, white background",
+        visual_template: "A 3D Pixar-style character illustration of the Vietnamese mother, with her precise facial features and warm smile preserved. She is {age} years old, wearing her original white sleeveless top and wide-leg white pants, with a pair of metal-framed sunglasses tucked into the neckline. Her pose is friendly and forward-facing, set against a clean, subtly graded light grey studio background. The character model is entire and well-lit with soft, warm studio lighting, perfect for a high-quality character render. All features and clothing details are clear and detailed",
 
         strengths: "Patient, loving, organized, empathetic.",
         weaknesses: "Can become worried easily, sometimes overprotective.",

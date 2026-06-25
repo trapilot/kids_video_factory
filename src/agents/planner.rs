@@ -32,11 +32,12 @@ impl Agent for PlannerAgent {
         let relation_chars = Character::relation_chars()
             .iter()
             .map(|c| format!(
-                "- {} ({})\n  Age: {}\n Role: {}\n  Relations: {}",
+                "- {} ({})\n  Age: {}\n Role: {}\n Personality: {}\n  Relations: {}",
                 c.name(&state.config.movie.language),
                 c.profession,
                 c.age(),
                 c.role,
+                c.personality_prompt,
                 c.relationship_prompt
             ))
             .collect::<Vec<_>>()
