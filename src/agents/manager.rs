@@ -12,7 +12,7 @@ pub struct ManagerAgent;
 #[async_trait]
 impl Agent for ManagerAgent {
     async fn run(&self, _state: &Arc<AppState>, job: &Job) -> Result<(), AgentError> {
-        println!("Running job: {}", job.id);
+        println!("Running workflow...");
         Ok(())
     }
 }

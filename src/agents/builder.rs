@@ -1,21 +1,50 @@
 
 use std::sync::Arc;
 use async_trait::async_trait;
-use tokio::io::AsyncWriteExt;
-use strum_macros::{Display, EnumString};
+use futures::StreamExt;
+use futures::TryStreamExt;
+use hound::{WavReader, WavWriter};
 
 use crate::AppState;
 use crate::agent::*;
 use crate::models::*;
 use crate::entities::*;
 use crate::provider;
+use crate::config;
 
 
+#[derive(Debug, Clone)]
+pub struct ShotAssets {
+    pub root: String,
+    pub image: String,
+    pub audio: String,
+    pub video: String,
+    pub subtitle: String,
+}
 
-#[derive(Debug, Clone, Display, EnumString)]
-pub enum VoiceMode {
-    PerSegment,
-    SingleVoice,
+pub struct RenderedShot {
+    pub shot_id: u32,
+    pub image_path: String,
+    pub audio_path: String,
+    pub video_path: String,
+    pub subtitle_path: String,
+    pub duration: f64,
+    pub motion: Motion,
+    pub transition: Transition,
+}
+
+impl ShotAssets {
+    pub fn new(base: &str, shot_id: u32) -> Self {
+        let root = format!("{base}/shot_{shot_id}");
+
+        Self {
+            image: format!("{root}/image.png"),
+            audio: format!("{root}/audio.wav"),
+            video: format!("{root}/video.mp4"),
+            subtitle: format!("{root}/subtitle.ass"),
+            root,
+        }
+    }
 }
 
 pub struct BuilderAgent;
@@ -33,7 +62,6 @@ impl Agent for BuilderAgent {
                 &state,
                 &storyboard,
                 job.workflow_path(),
-                VoiceMode::SingleVoice
             )
             .await
             .map_err(|e| AgentError::Execute(e.to_string()))?;
@@ -55,329 +83,95 @@ impl BuilderAgent {
         &self,
         state: &Arc<AppState>,
         storyboard: &Storyboard,
-        target_path: String,
-        voice_mode: VoiceMode
+        target_path: String
     ) -> Result<Timeline, String> {
-        let audio_root = format!("{}/audios", target_path);
-        let visual_root = format!("{}/images", target_path);
+        let handles = storyboard
+            .shots
+            .iter()
+            .cloned()
+            .filter(|shot| !shot.dialogues.is_empty())
+            .map(|shot| {
+                let providers = state.services.providers.clone();
+                let config = state.config.clone();
+                let target_path = target_path.clone();
 
-        tokio::fs::create_dir_all(&visual_root)
-            .await
-            .map_err(|e| e.to_string())?;
-
-        tokio::fs::create_dir_all(&audio_root)
-            .await
-            .map_err(|e| e.to_string())?;
-
-        let mut handles = Vec::new();
-
-        for scene in storyboard.scenes.clone() {
-            let voice_mode = voice_mode.clone();
-            let audio_root = audio_root.clone();
-            let visual_root = visual_root.clone();
-
-            let providers = state.services.providers.clone(); 
-            let config = state.config.clone();
-
-            handles.push(tokio::spawn(async move {
-                let visual_path = format!("{}/scene_{}.png", visual_root, scene.scene_id);
-                let audio_path = format!("{}/scene_{}.mp3", audio_root, scene.scene_id);
-
-                // ======================
-                // VISUAL (Cloudflare)
-                // ======================
-                if !tokio::fs::try_exists(&visual_path).await.unwrap_or(false) {
-                    // println!("🎬 [FFmpeg] Starting render visual {}", scene.scene_id);
-
-                    let req = provider::ProviderRequest::Image(provider::ImageRequest {
-                        prompt: scene.visual_prompt,
-                        num_steps: Some(config.diffusion.num_steps),
-                        guidance: Some(config.diffusion.guidance), 
-                        width: None,
-                        height: None,
-                    });
-
-                    let provider = provider::Provider::CFWorker;
-                    let guard = match providers.acquire(&provider).await {
-                        Some(v) => v,
-                        None => {
-                            return Err(format!("Provider not found: {}", &provider.to_string()));
-                        }
-                    };
-                    
-                    let rsp = guard.clone()
-                        .call(req)
-                        .await
-                        .map_err(|e| e.to_string())?
-                        .into_bytes()
-                        .map_err(|e| e.to_string());
-
-                    match rsp {
-                        Ok(image) => {
-                            tokio::fs::write(&visual_path, image)
-                                .await
-                                .map_err(|e| e.to_string())?;
-                            // println!("🎬 [FFmpeg] Render visual {} successful", scene.scene_id);
-                        }
-                        Err(e) => {
-                            println!("🎬 [FFmpeg] Render visual {} failed", scene.scene_id);
-                            return Err(e.to_string());
-                        }
-                    }
-                }
-
-                // ======================
-                // AUDIO (ElevenLabs)
-                // ======================
-                // if !tokio::fs::try_exists(&audio_path).await.unwrap_or(false) {
-                //     // println!("🎬 [FFmpeg] Starting render audio {}", scene.scene_id);                
-                //     let mut audio_paths = Vec::new();
-                    
-                //     let provider = provider::Provider::ElevenLabs;
-                //     let guard = match pm.acquire(&provider).await {
-                //         Some(v) => v,
-                //         None => {
-                //             return Err(format!("Provider not found: {}", &provider.to_string()));
-                //         }
-                //     };
-
-                //     match voice_mode {
-                //         VoiceMode::PerSegment => {
-                //             for (i, segment) in scene.voice_segments.iter().enumerate() {
-                //                 let req = provider::ProviderRequest::Audio(provider::AudioRequest {
-                //                     text: segment.text.clone(),
-                //                     voice_id: segment.voice_id.clone(),
-                //                     language: None,
-                //                     speed: None,
-                //                     stability: None,
-                //                     similarity_boost: None,
-                //                     format: Some(provider::AudioFormat::Wav),
-                //                 });
-
-                //                 let rsp = guard.clone()
-                //                     .call(req)
-                //                     .await
-                //                     .map_err(|e| e.to_string())?
-                //                     .into_bytes()
-                //                     .map_err(|e| e.to_string());
-
-                //                 match rsp {
-                //                     Ok(audio) => {
-                //                         let segment_path = format!("{}.tmp_{}", audio_path, i);
-
-                //                         tokio::fs::write(&segment_path, audio)
-                //                             .await
-                //                             .map_err(|e| e.to_string())?;
-
-                //                         audio_paths.push(segment_path);
-                //                     },
-
-                //                     Err(e) => {
-                //                         return Err(e.to_string());
-                //                     }
-                //                 }
-                //             }
-                //         }
-
-                //         VoiceMode::SingleVoice => {
-                //             let text =
-                //                 scene.voice_segments
-                //                 .iter()
-                //                 .map(|v| v.text.as_str())
-                //                 .collect::<Vec<_>>()
-                //                 .join("\n");
-
-                //             let req = provider::ProviderRequest::Audio(provider::AudioRequest {
-                //                 text: text,
-                //                 voice_id: Some(base_voice),
-                //                 language: None,
-                //                 speed: None,
-                //                 stability: None,
-                //                 similarity_boost: None,
-                //                 format: Some(provider::AudioFormat::Wav),
-                //             });
-
-                //             let rsp = guard.clone()
-                //                 .call(req)
-                //                 .await
-                //                 .map_err(|e| e.to_string())?
-                //                 .into_bytes()
-                //                 .map_err(|e| e.to_string());
-
-                //             match rsp {
-                //                 Ok(audio) => {
-                //                     tokio::fs::write(&audio_path, audio)
-                //                         .await
-                //                         .map_err(|e| e.to_string())?;
-                //                 },
-
-                //                 Err(e) => {
-                //                     return Err(e.to_string());
-                //                 }
-                //             };
-                //         }
-                //     }
-
-                //     if audio_paths.len() > 0 {
-                //         let list_path = format!("{}.list", audio_path);
-                    
-                //         let list_content = audio_paths
-                //             .iter()
-                //             .map(|p| format!("file '{}'\n", p))
-                //             .collect::<String>();
-
-                //         tokio::fs::write(&list_path, list_content)
-                //             .await
-                //             .map_err(|e| e.to_string())?;
-
-                //         let status = tokio::process::Command::new("ffmpeg")
-                //             .args([
-                //                 "-y",
-                //                 "-f", "concat",
-                //                 "-safe", "0",
-                //                 "-i", &list_path,
-                //                 "-c", "copy",
-                //                 &audio_path,
-                //             ])
-                //             .status()
-                //             .await
-                //             .map_err(|e| e.to_string())?;
-
-                //         if !status.success() {
-                //             return Err(format!("Failed to merge audios for scene {}", audio_path));
-                //         }
-                //     }
-                // }
-
-                if !tokio::fs::try_exists(&audio_path).await.unwrap_or(false) {
-                    let mut audio_paths = Vec::new();
-
-                    match voice_mode {
-                        VoiceMode::PerSegment => {
-                            for (i, segment) in scene.voice_segments.iter().enumerate() {
-                                let segment_path =
-                                    format!("{}.tmp_{}.wav", audio_path, i);
-
-                                piper_tts(
-                                    &segment.text,
-                                    &segment_path,
-                                )
-                                .await?;
-
-                                audio_paths.push(segment_path);
-                            }
-                        }
-
-                        VoiceMode::SingleVoice => {
-                            let text = scene
-                                .voice_segments
-                                .iter()
-                                .map(|v| v.text.as_str())
-                                .collect::<Vec<_>>()
-                                .join("\n");
-
-                            piper_tts(
-                                &text,
-                                &audio_path,
-                            )
-                            .await?;
-                        }
-                    }
-
-                    if !audio_paths.is_empty() {
-                        let list_path = format!("{}.list", audio_path);
-
-                        let list_content = audio_paths
-                            .iter()
-                            .map(|p| format!("file '{}'\n", p))
-                            .collect::<String>();
-
-                        tokio::fs::write(&list_path, list_content)
+                tokio::spawn(async move {
+                    let assets = ShotAssets::new(&target_path, shot.shot_id);
+                    let _ = tokio::fs::create_dir_all(&assets.root)
                             .await
-                            .map_err(|e| e.to_string())?;
+                            .map_err(|e| e.to_string());
 
-                        let status = tokio::process::Command::new("ffmpeg")
-                            .args([
-                                "-y",
-                                "-f", "concat",
-                                "-safe", "0",
-                                "-i", &list_path,
-                                "-c", "copy",
-                                &audio_path,
-                            ])
-                            .status()
-                            .await
-                            .map_err(|e| e.to_string())?;
-
-                        if !status.success() {
-                            return Err(format!(
-                                "Failed to merge audios for scene {}",
-                                scene.scene_id
-                            ));
-                        }
+                    let exists_image = tokio::fs::try_exists(&assets.image).await.unwrap_or(false);
+                    let exists_audio = tokio::fs::try_exists(&assets.audio).await.unwrap_or(false);
+                    
+                    if !exists_image {
+                        let _ = text_to_image(
+                            shot.visual_prompt(),
+                            assets.clone(),
+                            config.clone(),
+                            providers.clone()
+                        ).await;
                     }
-                }
 
-                let duration = Self.get_audio_duration(&audio_path)
-                    .await
-                    .map_err(|e| e.to_string())?;
+                    if !exists_audio {
+                        let _ = text_to_audio(
+                            shot.dialogues.clone(),
+                            assets.clone(),
+                            config.clone(),
+                            providers.clone()
+                        ).await;
+                    }
+                    
+                    let duration = get_audio_duration(&assets.audio).await?;
 
-                Ok::<_, String>(Clip {
-                    scene_id: scene.scene_id,
-                    transition: scene.transition,
-                    motion: scene.motion,
-                    audio_path,
-                    visual_path,
-                    duration,
-                    acrossfade: 0.0,
-                    start_time: 0.0,
-                    end_time: 0.0,
+                    Ok::<_, String>(RenderedShot {
+                        shot_id: shot.shot_id,
+                        image_path: assets.image,
+                        audio_path: assets.audio,
+                        video_path: assets.video,
+                        subtitle_path: assets.subtitle,
+                        duration: (duration + 0.05).ceil(),
+                        transition: shot.transition,
+                        motion: shot.motion,
+                    })
                 })
-            }));
-        }
+            })
+            .collect::<Vec<_>>();
+        
 
-        let mut assets = Vec::new();
+        let mut rendered_shots = Vec::new();
 
         for handle in handles {
-            assets.push(
-                handle
-                    .await
-                    .map_err(|e| e.to_string())?
-                    .map_err(|e| e.to_string())?
-            );
+            let shot = handle
+                .await
+                .map_err(|e| e.to_string())??;
+
+            rendered_shots.push(shot);
         }
 
-        assets.sort_by_key(|v| v.scene_id);
-
+        rendered_shots.sort_by_key(|v| v.shot_id);
+        
         let mut cursor = 0.0;
         let mut clips = Vec::new();
     
-        let has_transition = assets
-            .iter()
-            .any(|c| c.transition.is_active());
-        let render_mode = match has_transition {
-            true => RenderMode::FilterComplex,
-            _ => RenderMode::Concat,
-        };
-        let transition_duration = match render_mode {
-            RenderMode::Concat => 0.0,
-            RenderMode::FilterComplex => Transition::DURATION,
-        };
-
-        for asset in assets {
+        let transition_duration = Transition::DURATION;
+        for shot in rendered_shots {
             let start_time = cursor;
-            let end_time = start_time + asset.duration + transition_duration;
+
+            let end_time = start_time + shot.duration + transition_duration;
 
             clips.push(Clip {
-                scene_id: asset.scene_id,
-                transition: asset.transition,
-                motion: asset.motion,
-                visual_path: asset.visual_path,
-                audio_path: asset.audio_path,
-                duration: asset.duration + transition_duration,
-                acrossfade: transition_duration,
+                shot_id: shot.shot_id,
+                visual_path: shot.image_path,
+                audio_path: shot.audio_path,
+                video_path: shot.video_path,
+                subtitle_path: shot.subtitle_path,
+                duration: shot.duration + transition_duration,
                 start_time,
                 end_time,
+                acrossfade: transition_duration,
+                transition: shot.transition,
+                motion: shot.motion,
             });
 
             cursor = end_time;
@@ -385,62 +179,186 @@ impl BuilderAgent {
 
         Ok(Timeline {
             title: storyboard.title.clone(),
-            render_mode,
             clips,
         })
     }
-
-    async fn get_audio_duration(&self, path: &str) -> Result<f64, String> {
-        let output = tokio::process::Command::new("ffprobe")
-            .args([
-                "-v", "error",
-                "-show_entries", "format=duration",
-                "-of", "default=noprint_wrappers=1:nokey=1",
-                path,
-            ])
-            .output()
-            .await
-            .map_err(|e| e.to_string())?;
-
-        
-        let s = String::from_utf8_lossy(&output.stdout);
-        s.trim().parse::<f64>().map_err(|e| e.to_string())
-    }
 }
 
-async fn piper_tts(
-    text: &str,
-    output: &str,
+async fn text_to_image(
+    prompt: String,
+    assets: ShotAssets,
+    config: Arc<config::Config>,
+    providers: Arc<provider::ProviderManager>,
 ) -> Result<(), String> {
-    let model = "./tools/models/en_US-lessac-medium.onnx";
-    let piper_bin = "./tools/piper/piper";
+    let req =
+        provider::ProviderRequest::Image(
+            provider::ImageRequest {
+                prompt: prompt,
+                num_steps: Some(config.diffusion.num_steps),
+                guidance: Some(config.diffusion.guidance),
+                width: None,
+                height: None,
+            },
+        );
 
-    // println!("cwd: {:?}", std::env::current_dir());
-    // println!("piper exists: {}", std::path::Path::new(piper_bin).exists());
-    // println!("model exists: {}", std::path::Path::new(model).exists());
+    let provider = provider::Provider::CFWorker;
 
-    let mut child = tokio::process::Command::new(piper_bin)
-        .args([
-            "--model", model,
-            "--output_file", output,
-        ])
-        .stdin(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("Piper spawn --> {}", e.to_string()))?;
+    let guard = providers
+        .acquire(&provider)
+        .await
+        .ok_or_else(|| {
+            format!("Provider not found")
+        })?;
 
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin
-            .write_all(text.as_bytes())
-            .await
-            .map_err(|e| format!("Piper running --> {}", e.to_string()))?;
-    }
+    let image = guard
+        .call(req)
+        .await
+        .map_err(|e| e.to_string())?
+        .into_bytes()
+        .map_err(|e| e.to_string())?;
 
-    let status = child.wait().await.map_err(|e| e.to_string())?;
-
-    if !status.success() {
-        return Err("Piper synthesis failed".into());
-    }
+    tokio::fs::write(&assets.image, image)
+        .await
+        .map_err(|e| e.to_string())?;
 
     Ok(())
+}
+
+
+async fn text_to_audio(
+    dialogues: Vec<Dialogue>,
+    assets: ShotAssets,
+    _config: Arc<config::Config>,
+    _providers: Arc<provider::ProviderManager>,
+) -> Result<(), String> {
+    const MODEL: &str = "./tools/models/en_US-lessac-medium.onnx";
+    const PIPER_BIN: &str = "./tools/piper/piper";
+    const PIPER_CONCURRENCY: usize = 4;
+
+    // println!("cwd: {:?}", std::env::current_dir());
+    // println!("piper exists: {}", std::path::Path::new(PIPER_BIN).exists());
+    // println!("model exists: {}", std::path::Path::new(MODEL).exists());
+
+    let final_path = assets.audio.clone();
+    let root_path = assets.root.clone();
+
+    let mut audio_paths: Vec<(usize, String)> =
+        futures::stream::iter(dialogues.into_iter().enumerate())
+            .map(|(i, dialogue)| {
+                let text = dialogue.text.clone();
+                let segment_path = format!("{}/audio.part_{i}.wav", root_path);
+
+                async move {
+                    let mut child = tokio::process::Command::new(PIPER_BIN)
+                        .args([
+                            "--model", MODEL,
+                            "--output_file",
+                            &segment_path,
+                        ])
+                        .stdin(std::process::Stdio::piped())
+                        .stderr(std::process::Stdio::piped())
+                        .spawn()
+                        .map_err(|e| format!("Piper spawn failed: {e}"))?;
+
+                    if let Some(mut stdin) = child.stdin.take() {
+                        tokio::io::AsyncWriteExt::write_all(
+                            &mut stdin,
+                            text.as_bytes(),
+                        )
+                        .await
+                        .map_err(|e| format!("Piper stdin failed: {e}"))?;
+                    }
+
+                    let output = child
+                        .wait_with_output()
+                        .await
+                        .map_err(|e| format!("Piper wait failed: {e}"))?;
+
+                    if !output.status.success() {
+                        return Err(format!(
+                            "Piper synthesis failed: {}",
+                            String::from_utf8_lossy(&output.stderr)
+                        ));
+                    }
+
+                    Ok::<_, String>((i, segment_path))
+                }
+            })
+            .buffer_unordered(PIPER_CONCURRENCY)
+            .try_collect()
+            .await?;
+
+    if audio_paths.is_empty() {
+        let silent_path = format!("{}/audio.part_0.wav", root_path);
+
+        let status = tokio::process::Command::new("ffmpeg")
+            .args([
+                "-y",
+                "-f", "lavfi",
+                "-i", "anullsrc=r=44100:cl=stereo",
+                "-t", "5",
+                "-acodec", "pcm_s16le",
+                &final_path,
+            ])
+            .status()
+            .await
+            .map_err(|e| format!("Create silent audio failed: {e}"))?;
+
+        if !status.success() {
+            return Err("Failed to create silent audio".into());
+        }
+
+        audio_paths.push((0, silent_path));
+    }
+
+    audio_paths.sort_by_key(|(i, _)| *i);
+    
+    let first = hound::WavReader::open(&audio_paths[0].1)
+        .map_err(|e| e.to_string())?;
+
+    let spec = first.spec();
+
+    let mut writer = hound::WavWriter::create(
+        &final_path,
+        spec,
+    )
+    .map_err(|e| e.to_string())?;
+
+    for (_, path) in audio_paths {
+        let mut reader =
+            hound::WavReader::open(path)
+                .map_err(|e| e.to_string())?;
+
+        for sample in reader.samples::<i16>() {
+            writer
+                .write_sample(
+                    sample.map_err(|e| e.to_string())?
+                )
+                .map_err(|e| e.to_string())?;
+        }
+    }
+
+    writer.finalize()
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
+        
+}
+
+async fn get_audio_duration(path: &str) -> Result<f64, String> {
+    let output = tokio::process::Command::new("ffprobe")
+        .args([
+            "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            path,
+        ])
+        .output()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    
+    let s = String::from_utf8_lossy(&output.stdout);
+    s.trim().parse::<f64>()
+        .map_err(|e| format!("Parse duration {} --> {}", path, e.to_string()))
 }

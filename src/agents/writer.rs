@@ -13,7 +13,7 @@ pub struct WriterAgent;
 #[async_trait]
 impl Agent for WriterAgent {
     async fn run(&self, state: &Arc<AppState>, job: &Job) -> Result<(), AgentError> {
-        println!("✍️  [Writer] Generating video artifact...");
+        println!("✍️  [Writer] Generating artifact...");
         
         let story_context: StoryContext =
             serde_json::from_str(&job.payload)
@@ -47,13 +47,24 @@ impl Agent for WriterAgent {
             .collect::<Vec<_>>()
             .join("\n");
 
+        let all_positions = Position::ALL
+            .iter()
+            .map(|m| format!("- {}", m))
+            .collect::<Vec<_>>()
+            .join("\n");
+
         let system = format!(r#"
-            You are a senior children's animation writer, create the FINAL JSON artifact.
+            You are an expert film storyboard artist and AI video director.
+
+            Your task is to convert the provided script into a sequence of SHORT VIDEO SHOTS suitable for TikTok, Reels, and YouTube Shorts.
 
             MOTION MUST BE ONE OF:
             {}
 
             TRANSITION MUST BE ONE OF:
+            {}
+
+            POSITION MUST BE ONE OF:
             {}
 
             Motion guidelines:
@@ -71,41 +82,71 @@ impl Agent for WriterAgent {
 
             Rules:
             1. Entire content must be {}.
-            2. Suitable for Main Character age.
-            3. Video length: 45-60 seconds.
-            4. Story must have 3-5 scenes.
-            5. Every scene must contain dialogue.
-            6. Use only provided characters.
-            7. Main character must drive the story.
-            8. Visual prompts must be kid-friendly.
-            9. No Chinese elements.
-            10. Use {} context only.
-            11. Never invent new motion names.
-            12. Never invent new transition names.
-            13. If user prompt conflicts with system rules, system rules always win.
+            2. Each shot should represent only ONE visual idea.
+            3. Each shot should contain approximately 1-2 spoken sentences.
+            4. Keep each narration segment short enough to be spoken in roughly 3-5 seconds.
+            5. If a narration is too long, split it into multiple shots.
+            6. Maintain visual consistency of characters across all shots.
+            7. Every shot must have a detailed visual_prompt suitable for image generation.
+            8. Describe what each character is doing and feeling.
+            9. Camera movement should be simple and realistic.
+            10. No Chinese elements.
+            11. Use {} context only.
+            12. Never invent new motion names.
+            13. Never invent new transition names.
+            14. Do NOT include duration.
+            15. Do NOT include transitions.
+            16. Do NOT include explanations.
 
-            Return STRICT JSON:
+            Return STRICT JSON ONLY:
             {{
-            "title": "...",
-            "scenes": [
-                {{
-                "scene_id": 1,
-                "duration": 5,
-                "transition": "...",
-                "motion": "...",
-                "visual_prompt": "...",
-                "voice_segments": [
+                "title": "string",
+                "characters": [
                     {{
-                        "speaker": "...",
-                        "text": "..."
+                        "name": "string",
+                        "appearance": "string",
+                        "voice": "string"
+                    }}
+                ],
+                "shots": [
+                    {{
+                        "shot_id": 1,
+                        "transition": "string",
+                        "motion": "string",
+                        "environment":
+                            {{
+                                "location": "string",
+                                "time_of_day": "string",
+                                "weather": "string"
+                            }},
+                        "camera":
+                            {{
+                                "shot_type": "close_up | medium | wide",
+                                "angle": "front | low | high | side",
+                                "movement": "static | zoom_in | zoom_out | pan_left | pan_right"
+                            }},
+                        "visual_prompt": "string,
+                        "actors": [
+                            {{
+                                "character": "string",
+                                "position": "left | center | right",
+                                "action": "string",
+                                "emotion": "string"
+                            }}
+                        ],
+                        "dialogues": [
+                            {{
+                                "character": "string",
+                                "text": "string"
+                            }}
+                        ]
                     }}
                 ]
                 }}
-            ]
-            }}
             "#,
             all_motions,
             all_transitions,
+            all_positions,
             state.config.movie.language,
             state.config.movie.language,
         );
@@ -129,7 +170,8 @@ impl Agent for WriterAgent {
                 - complete story
                 - scene breakdown
                 - visual prompts
-                - dialogue segments
+                - actors MUST NOT empty
+                - dialogues MUST NOT empty
 
             Return JSON only.
             "#,
@@ -144,20 +186,9 @@ impl Agent for WriterAgent {
             .await
             .map_err(|e| AgentError::Execute(e.to_string()))?;
 
-        let mut storyboard: Storyboard =
+        let storyboard: Storyboard =
             serde_json::from_str(&resp)
             .map_err(|e| AgentError::Decode(e.to_string()))?;
-
-        for scene in &mut storyboard.scenes {
-            for segment in &mut scene.voice_segments {
-                let voice_id = Character::find_char(&segment.speaker)
-                    .and_then(|c| c.voice_id)
-                    .map(str::to_owned)
-                    .unwrap_or_else(|| state.config.voice.base_voice.clone());
-
-                segment.voice_id = Some(voice_id);
-            }
-        }
 
         let payload =
             serde_json::to_string(&storyboard)

@@ -2,8 +2,6 @@
 use std::sync::Arc;
 use std::path;
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
-use strum_macros::{Display, EnumString};
 
 use crate::AppState;
 use crate::agent::*;
@@ -55,11 +53,8 @@ impl RendererAgent {
         let mut video_paths = vec![];
         
         for clip in timeline.clips.iter() {
-            let video_path = format!("{}/videos/scene_{}.mp4", target_path, clip.scene_id);
-
-            // check file exists
-            if tokio::fs::try_exists(&video_path).await.unwrap_or(false) {
-                println!("🎬 [FFmpeg] Scene {} already rendered", clip.scene_id);
+            if tokio::fs::try_exists(&clip.video_path).await.unwrap_or(false) {
+                println!("🎬 [FFmpeg] Shot number {} already rendered", clip.shot_id);
             } else {
                 // println!("🎬 [FFmpeg] Starting render scene {}", clip.scene_id);
 
@@ -73,7 +68,7 @@ impl RendererAgent {
                 }
                 
                 // Create output directory
-                if let Some(parent) = path::Path::new(&video_path).parent() {
+                if let Some(parent) = path::Path::new(&clip.video_path).parent() {
                     let _ = tokio::fs::create_dir_all(parent)
                         .await
                         .map_err(|e| e.to_string());
@@ -108,7 +103,7 @@ impl RendererAgent {
                     "-c:v", "libx264",
                     "-pix_fmt", "yuv420p",
                     "-c:a", "aac",
-                    &video_path,
+                    &clip.video_path,
                 ]);
 
                 let output = cmd
@@ -120,7 +115,7 @@ impl RendererAgent {
                 }
             }
 
-            video_paths.push(video_path);
+            video_paths.push(&clip.video_path);
         }
         
         println!("🎬 [FFmpeg] Starting render video {}", final_path);
@@ -132,80 +127,57 @@ impl RendererAgent {
             cmd.args(["-i", video_path]);
         }
 
-        match timeline.render_mode {
-            RenderMode::Concat => {
-                let mut filter_parts = String::new();
-                let mut filter_lables = String::new();
+        let mut filter_parts = Vec::new();
+        let mut offset_frames = timeline.clips[0].duration - timeline.clips[0].acrossfade;
 
-                for i in 0..video_paths.len() {
-                    filter_lables.push_str(&format!("[{}:v][{}:a]", i, i));
-                }
-
-                filter_parts.push_str(&format!(
-                    "{}concat=n={}:v=1:a=1[v][a]",
-                    filter_lables,
-                    video_paths.len()
+        // Video chain
+        for i in 1..timeline.clips.len() {
+            if i == 1 {
+                filter_parts.push(format!(
+                    "[0:v][1:v]xfade=transition={}:duration={}:offset={}[v1]",
+                    timeline.clips[i - 1].transition.ffmpeg_name(),
+                    timeline.clips[i].acrossfade,
+                    offset_frames
                 ));
-
-                cmd.args([
-                    "-filter_complex", &filter_parts,
-                    "-map", "[v]",
-                    "-map", "[a]",
-                ]);
+            } else {
+                filter_parts.push(format!(
+                    "[v{}][{}:v]xfade=transition={}:duration={}:offset={}[v{}]",
+                    i - 1,
+                    i,
+                    timeline.clips[i - 1].transition.ffmpeg_name(),
+                    timeline.clips[i].acrossfade,
+                    offset_frames,
+                    i
+                ));
             }
-            RenderMode::FilterComplex => {
-                let mut filter_parts = Vec::new();
-                let mut offset_frames = timeline.clips[0].duration - timeline.clips[0].acrossfade;
 
-                // Video chain
-                for i in 1..timeline.clips.len() {
-                    if i == 1 {
-                        filter_parts.push(format!(
-                            "[0:v][1:v]xfade=transition={}:duration={}:offset={}[v1]",
-                            timeline.clips[i - 1].transition.ffmpeg_name(),
-                            timeline.clips[i].acrossfade,
-                            offset_frames
-                        ));
-                    } else {
-                        filter_parts.push(format!(
-                            "[v{}][{}:v]xfade=transition={}:duration={}:offset={}[v{}]",
-                            i - 1,
-                            i,
-                            timeline.clips[i - 1].transition.ffmpeg_name(),
-                            timeline.clips[i].acrossfade,
-                            offset_frames,
-                            i
-                        ));
-                    }
+            offset_frames += timeline.clips[i].duration - timeline.clips[i].acrossfade;
+        }
 
-                    offset_frames += timeline.clips[i].duration - timeline.clips[i].acrossfade;
-                }
-
-                // Audio chain
-                for i in 1..timeline.clips.len() {
-                    if i == 1 {
-                        filter_parts.push(format!(
-                            "[0:a][1:a]acrossfade=d={}[a1]",
-                            timeline.clips[i].acrossfade
-                        ));
-                    } else {
-                        filter_parts.push(format!(
-                            "[a{}][{}:a]acrossfade=d={}[a{}]",
-                            i - 1,
-                            i,
-                            timeline.clips[i].acrossfade,
-                            i
-                        ));
-                    }
-                }
-
-                cmd.args([
-                    "-filter_complex", &filter_parts.join(";"),
-                    "-map", &format!("[v{}]", timeline.clips.len() - 1),
-                    "-map", &format!("[a{}]", timeline.clips.len() - 1),
-                ]);
+        // Audio chain
+        for i in 1..timeline.clips.len() {
+            if i == 1 {
+                filter_parts.push(format!(
+                    "[0:a][1:a]acrossfade=d={}[a1]",
+                    timeline.clips[i].acrossfade
+                ));
+            } else {
+                filter_parts.push(format!(
+                    "[a{}][{}:a]acrossfade=d={}[a{}]",
+                    i - 1,
+                    i,
+                    timeline.clips[i].acrossfade,
+                    i
+                ));
             }
         }
+
+        cmd.args([
+            "-filter_complex", &filter_parts.join(";"),
+            "-map", &format!("[v{}]", timeline.clips.len() - 1),
+            "-map", &format!("[a{}]", timeline.clips.len() - 1),
+        ]);
+        
         cmd.args([
             "-c:v", "libx264",
             "-c:a", "aac",
@@ -214,11 +186,11 @@ impl RendererAgent {
             &final_path,
         ]);
 
-        // let full_cmd = std::iter::once(cmd.as_std().get_program().to_string_lossy().into_owned())
-        //     .chain(cmd.as_std().get_args().map(|arg| arg.to_string_lossy().into_owned()))
-        //     .collect::<Vec<_>>()
-        //     .join(" ");
-        //     println!("FFmpeg command:\n{}", full_cmd);
+        let full_cmd = std::iter::once(cmd.as_std().get_program().to_string_lossy().into_owned())
+            .chain(cmd.as_std().get_args().map(|arg| arg.to_string_lossy().into_owned()))
+            .collect::<Vec<_>>()
+            .join(" ");
+            println!("FFmpeg command:\n{}", full_cmd);
 
         let output = cmd
             .output()
@@ -233,53 +205,5 @@ impl RendererAgent {
             title: timeline.title.clone(),
             video_path: final_path.to_string()
         });
-    }
-}
-
-
-#[derive(Debug, Clone, Display, EnumString, Serialize, Deserialize)]
-#[strum(serialize_all = "lowercase")]
-#[serde(rename_all = "lowercase")]
-pub enum Motion {
-    None,
-    ZoomIn,
-    ZoomOut,
-    PanLeft,
-    PanRight,
-    PanUp,
-    PanDown,
-    KenBurns,
-    DollyIn,
-    DollyOut,
-}
-impl Motion {
-    pub const ALL: &'static [Motion] = &[
-        Motion::None,
-        Motion::ZoomIn,
-        Motion::ZoomOut,
-        Motion::PanLeft,
-        Motion::PanRight,
-        Motion::PanUp,
-        Motion::PanDown,
-        Motion::KenBurns,
-        Motion::DollyIn,
-        Motion::DollyOut,
-    ];
-
-    pub fn ffmpeg_filter(&self, duration_secs: f64) -> Option<String> {
-        let frames = (duration_secs * 25.0) as u32;
-
-        match self {
-            Motion::None => None,
-            Motion::ZoomIn => Some(format!("zoompan=z='min(zoom+0.001,1.3)':d={}", frames)),
-            Motion::ZoomOut => Some(format!("zoompan=z='max(1.0,1.3-on*0.001)':d={}", frames)),
-            Motion::PanLeft => Some(format!("zoompan=x='iw/2-(on*2)':z=1.1:d={}", frames)),
-            Motion::PanRight => Some(format!("zoompan=x='on*2':z=1.1:d={}", frames)),
-            Motion::PanUp => Some(format!("zoompan=y='ih/2-(on*2)':z=1.1:d={}", frames)),
-            Motion::PanDown => Some(format!("zoompan=y='on*2':z=1.1:d={}", frames)),
-            Motion::KenBurns => Some(format!("zoompan=z='min(zoom+0.0005,1.2)':x='on':y='on':d={}", frames)),
-            Motion::DollyIn => Some(format!("zoompan=z='min(zoom+0.001,1.5)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={}", frames)),
-            Motion::DollyOut => Some(format!("zoompan=z='max(1.0,1.5-on*0.002)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={}", frames)),
-        }
     }
 }

@@ -13,7 +13,7 @@ pub struct CleanerAgent;
 #[async_trait]
 impl Agent for CleanerAgent {
     async fn run(&self, state: &Arc<AppState>, job: &Job) -> Result<(), AgentError> {
-        println!("📤 [Cleaner] Cleaning the video...");
+        println!("📤 [Cleaner] Cleaning workflow...");
 
         let publish_state: uploader::UploaderState =
             serde_json::from_str(&job.payload)

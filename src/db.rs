@@ -271,7 +271,7 @@ impl DbManager {
         payload: String,
     ) -> Result<(), String> {
         if job.agent != agent {
-        self.create_job(
+            self.create_job(
                 job.workflow_id.clone(),
                 job.agent.clone(),
                 agent,

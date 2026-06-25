@@ -72,15 +72,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenvy::dotenv().ok(); 
     println!("🚀 Sentinel System v1.0 - AI Video Engine Startup");
 
-    let revert_job = "";
     let state = Arc::new(AppState::build().await?);
 
     if !oauth::has_auth_token(&state.services.db).await {
         oauth::start_oauth_server(&state.services.db).await;
     }
 
+    let revert_job = "";
     if !revert_job.is_empty() {
-        println!("Revert current job: {}", revert_job);
+        println!("\nRevert current job: {}\n\n", revert_job);
         state.services.db.revert_job(revert_job).await?;
     }    
 

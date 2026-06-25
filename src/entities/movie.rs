@@ -3,12 +3,20 @@ use serde::{Deserialize, Serialize};
 use strum_macros::{Display, EnumString};
 
 
-#[derive(Debug, Clone, Display, EnumString, Serialize, Deserialize)]
+#[derive(Debug, Display, EnumString, Serialize, Deserialize, Clone)]
 #[strum(serialize_all = "lowercase")]
 #[serde(rename_all = "lowercase")]
-pub enum RenderMode {
-    Concat,
-    FilterComplex,
+pub enum Position {
+    Left,
+    Center,
+    Right,
+}
+impl Position {
+    pub const ALL: &'static [Position] = &[
+        Position::Left,
+        Position::Center,
+        Position::Right,
+    ];
 }
 
 #[derive(Debug, Clone, Display, EnumString, Serialize, Deserialize)]
@@ -86,10 +94,6 @@ impl Transition {
         Transition::FadeWhite,
     ];
 
-    pub fn is_active(&self) -> bool {
-        !matches!(self, Transition::None)
-    }
-
     pub fn ffmpeg_name(&self) -> &'static str {
         match self {
             Self::None => "fade",
@@ -123,13 +127,6 @@ pub struct VideoMetadata {
 pub struct Timeline {
     pub title: String,
     pub clips: Vec<Clip>,
-    pub render_mode: RenderMode,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Storyboard {
-    pub title: String,
-    pub scenes: Vec<Scene>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
@@ -141,10 +138,18 @@ pub struct StoryContext {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Storyboard {
+    pub title: String,
+    pub shots: Vec<Shot>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Clip {
-    pub scene_id: u8,
+    pub shot_id: u32,
     pub audio_path: String,
     pub visual_path: String,
+    pub video_path: String,
+    pub subtitle_path: String,
     pub start_time: f64,
     pub end_time: f64,
     pub duration: f64,
@@ -154,18 +159,76 @@ pub struct Clip {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Scene {
-    pub scene_id: u8,
-    pub duration: u8,
+pub struct Shot {
+    pub shot_id: u32,
+    pub visual_prompt: String,
     pub motion: Motion,
     pub transition: Transition,
-    pub visual_prompt: String,
-    pub voice_segments: Vec<VoiceSegment>
+    pub actors: Vec<Actor>,
+    pub dialogues: Vec<Dialogue>,
+    pub environment: Environment,
+    pub camera: Camera,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct VoiceSegment {
+pub struct Actor {
+    pub character: String,
+    pub action: String,
+    pub emotion: String,
+    pub position: Position,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Dialogue {
+    pub character: String,
     pub text: String,
-    pub speaker: String,
-    pub voice_id: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Camera {
+    pub shot_type: String,   // or enum
+    pub angle: String,
+    pub movement: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Environment {
+    pub location: String,
+    pub time_of_day: String,
+    pub weather: String,
+}
+
+impl Shot {
+    pub fn visual_prompt(&self) -> String {
+        let actors = if self.actors.is_empty() {
+            "no characters".to_string()
+        } else {
+            self.actors
+                .iter()
+                .map(|a| a.character.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+
+        let environment = format!(
+            "{} at {}, {} weather",
+            self.environment.location,
+            self.environment.time_of_day,
+            self.environment.weather
+        );
+
+        let camera = format!(
+            "{} shot, {} angle, {} movement",
+            self.camera.shot_type,
+            self.camera.angle,
+            self.camera.movement
+        );
+
+        format!(
+            "{env}, actors: {actors}, camera: {camera}, cinematic lighting, ultra detailed, 9:16 vertical, realistic",
+            env = environment,
+            actors = actors,
+            camera = camera
+        )
+    }
 }

@@ -370,12 +370,13 @@ impl ProviderManager {
                 state.running += 1;
 
                 println!(
-                    "[{}] acquired key: {} | used: {} | running: {} | maximun: {}",
+                    "[{}] acquired key_index: {} | used: {} | running: {} | maximun: {} | key: {}",
                     provider.clone().to_string(),
-                    key.credential.clone().api_key.to_string(),
+                    idx,
                     key.daily_used.clone().to_string(),
                     state.running.clone().to_string(),
                     state.maximum.clone().to_string(),
+                    key.credential.clone().api_key.to_string(),
                 );
                 return Some(ProviderGuard {
                     credential,

@@ -64,21 +64,35 @@ End
 ```text
 src/
 ├── agents/
-│   ├── gemini.rs
-│   ├── openai.rs
-│   └── openrouter.rs
-│
+│   ├── builder.rs
+│   ├── cleaner.rs
+│   ├── manager.rs
+│   ├── planner.rs
+│   ├── publisher.rs
+│   ├── renderer.rs
+│   └── writer.rs
+├── entities/
+│   ├── character.rs
+│   ├── movie.rs
+│   └── writer.rs
+├── models/
+│   ├── auth.rs
+│   └── job.rs
+├── providers/
+│   ├── cf_worker.rs
+│   ├── eleven_labs.rs
+│   └── gemini.rs
+├── uploaders/
+│   ├── tiktok.rs
+│   └── youtube.rs
+├── agent.rs
+├── config.rs
 ├── db.rs
-├── enums.rs
-├── helper.rs
-├── macro_rules.rs
 ├── main.rs
-├── models.rs
-├── renderer.rs
-├── scheduler.rs
+├── oauth.rs
+├── provider.rs
 ├── uploader.rs
-├── workflow.rs
-└── main.rs
+└── workflow.rs
 ```
 
 ---
@@ -86,14 +100,18 @@ src/
 ## Environment Variables
 
 ```env
-HF_API_KEY=
-OPENAI_API_KEY=
-GEMINI_API_KEY=
-OPENROUTER_API_KEY=
-ELEVENLABS_API_KEY=
+GEMINI_KEY_1=
+GEMINI_KEY_2=
 
-CF_ACCOUNT_ID=
-CF_API_TOKEN=
+ELEVEN_LABS_KEY_1=
+ELEVEN_LABS_KEY_2=
+
+CF_WORKER_KEY_1=
+CF_WORKER_ACCOUNT_1=
+CF_WORKER_KEY_2=
+CF_WORKER_ACCOUNT_2=
+
+
 
 YOUTUBE_CLIENT_ID=
 YOUTUBE_CLIENT_SECRET=
@@ -128,19 +146,14 @@ cargo run
 output/
 ├── 20200101_001/
 │   ├── session_id
-|           ├── audios/
-│           │      ├── scene_1.mp3
-│           │      ├── scene_2.mp3
-│           │      └── scene_3.mp3
-│           ├── images
-│           │      ├── scene_1.png
-│           │      ├── scene_2.png
-│           │      └── scene_3.png
-│           ├── videos
-│           │      ├── scene_1.mp4
-│           │      ├── scene_2.mp4
-│           │      └── scene_3.mp4
-|           ├── list.txt
+|           ├── shot_1/
+│           │      ├── image.png
+│           │      ├── audio.mp3
+│           │      └── video.mp4
+│           ├── shot_2
+│           │      ├── image.png
+│           │      ├── audio.mp3
+│           │      └── video.mp4
 |           └── final_video.mp4
 │
 ```

@@ -15,7 +15,7 @@ pub struct PublisherAgent;
 #[async_trait]
 impl Agent for PublisherAgent {
     async fn run(&self, state: &Arc<AppState>, job: &Job) -> Result<(), AgentError> {
-        println!("📤 [Publisher] Publishing the video...");
+        println!("📤 [Publisher] Publishing video...");
         
         let video_metadata: VideoMetadata =
             serde_json::from_str(&job.payload)
