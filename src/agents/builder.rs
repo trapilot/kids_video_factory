@@ -3,7 +3,6 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use futures::StreamExt;
 use futures::TryStreamExt;
-use hound::{WavReader, WavWriter};
 
 use crate::AppState;
 use crate::agent::*;
@@ -15,11 +14,10 @@ use crate::config;
 
 #[derive(Debug, Clone)]
 pub struct ShotAssets {
-    pub root: String,
-    pub image: String,
-    pub audio: String,
-    pub video: String,
-    pub subtitle: String,
+    pub root_path: String,
+    pub image_path: String,
+    pub audio_path: String,
+    pub video_path: String,
 }
 
 pub struct RenderedShot {
@@ -27,7 +25,7 @@ pub struct RenderedShot {
     pub image_path: String,
     pub audio_path: String,
     pub video_path: String,
-    pub subtitle_path: String,
+    pub subtitle: String,
     pub duration: f64,
     pub motion: Motion,
     pub transition: Transition,
@@ -38,12 +36,19 @@ impl ShotAssets {
         let root = format!("{base}/shot_{shot_id}");
 
         Self {
-            image: format!("{root}/image.png"),
-            audio: format!("{root}/audio.wav"),
-            video: format!("{root}/video.mp4"),
-            subtitle: format!("{root}/subtitle.ass"),
-            root,
+            image_path: format!("{root}/image.png"),
+            audio_path: format!("{root}/audio.wav"),
+            video_path: format!("{root}/video.mp4"),
+            root_path: root,
         }
+    }
+
+    pub async fn create_dir_all(&self) -> Result<(), String> {
+        let _ = tokio::fs::create_dir_all(&self.root_path)
+            .await
+            .map_err(|e| e.to_string());
+
+        Ok(())
     }
 }
 
@@ -97,16 +102,15 @@ impl BuilderAgent {
 
                 tokio::spawn(async move {
                     let assets = ShotAssets::new(&target_path, shot.shot_id);
-                    let _ = tokio::fs::create_dir_all(&assets.root)
-                            .await
-                            .map_err(|e| e.to_string());
+                    let _ = assets.create_dir_all().await;
 
-                    let exists_image = tokio::fs::try_exists(&assets.image).await.unwrap_or(false);
-                    let exists_audio = tokio::fs::try_exists(&assets.audio).await.unwrap_or(false);
+                    let exists_image = tokio::fs::try_exists(&assets.image_path).await.unwrap_or(false);
+                    let exists_audio = tokio::fs::try_exists(&assets.audio_path).await.unwrap_or(false);
                     
                     if !exists_image {
                         let _ = text_to_image(
                             shot.visual_prompt(),
+                            // shot.visual_prompt.clone(),
                             assets.clone(),
                             config.clone(),
                             providers.clone()
@@ -122,15 +126,19 @@ impl BuilderAgent {
                         ).await;
                     }
                     
-                    let duration = get_audio_duration(&assets.audio).await?;
+                    let duration = get_audio_duration(&assets.audio_path).await?;
 
                     Ok::<_, String>(RenderedShot {
                         shot_id: shot.shot_id,
-                        image_path: assets.image,
-                        audio_path: assets.audio,
-                        video_path: assets.video,
-                        subtitle_path: assets.subtitle,
-                        duration: (duration + 0.05).ceil(),
+                        image_path: assets.image_path,
+                        audio_path: assets.audio_path,
+                        video_path: assets.video_path,
+                        subtitle: shot.dialogues
+                            .iter()
+                            .map(|d| d.text.as_str())
+                            .collect::<Vec<_>>()
+                            .join(" "),
+                        duration,
                         transition: shot.transition,
                         motion: shot.motion,
                     })
@@ -151,22 +159,23 @@ impl BuilderAgent {
 
         rendered_shots.sort_by_key(|v| v.shot_id);
         
+        let transition_duration = Transition::DURATION;
+        
         let mut cursor = 0.0;
         let mut clips = Vec::new();
     
-        let transition_duration = Transition::DURATION;
         for shot in rendered_shots {
+            let duration = shot.duration + transition_duration;
             let start_time = cursor;
-
-            let end_time = start_time + shot.duration + transition_duration;
+            let end_time = start_time + duration;
 
             clips.push(Clip {
                 shot_id: shot.shot_id,
                 visual_path: shot.image_path,
                 audio_path: shot.audio_path,
                 video_path: shot.video_path,
-                subtitle_path: shot.subtitle_path,
-                duration: shot.duration + transition_duration,
+                subtitle: shot.subtitle,
+                duration,
                 start_time,
                 end_time,
                 acrossfade: transition_duration,
@@ -179,6 +188,9 @@ impl BuilderAgent {
 
         Ok(Timeline {
             title: storyboard.title.clone(),
+            final_path: format!("{}/final_video.mp4", &target_path),
+            video_path: format!("{}/video.mp4", &target_path),
+            subtitle_path: format!("{}/subtitle.ass", &target_path),
             clips,
         })
     }
@@ -217,7 +229,7 @@ async fn text_to_image(
         .into_bytes()
         .map_err(|e| e.to_string())?;
 
-    tokio::fs::write(&assets.image, image)
+    tokio::fs::write(&assets.image_path, image)
         .await
         .map_err(|e| e.to_string())?;
 
@@ -239,8 +251,8 @@ async fn text_to_audio(
     // println!("piper exists: {}", std::path::Path::new(PIPER_BIN).exists());
     // println!("model exists: {}", std::path::Path::new(MODEL).exists());
 
-    let final_path = assets.audio.clone();
-    let root_path = assets.root.clone();
+    let final_path = assets.audio_path.clone();
+    let root_path = assets.root_path.clone();
 
     let mut audio_paths: Vec<(usize, String)> =
         futures::stream::iter(dialogues.into_iter().enumerate())

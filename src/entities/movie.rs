@@ -70,7 +70,6 @@ impl Motion {
 #[strum(serialize_all = "lowercase")]
 #[serde(rename_all = "lowercase")]
 pub enum Transition {
-    None,
     Fade,
     SlideLeft,
     SlideRight,
@@ -83,7 +82,6 @@ pub enum Transition {
 impl Transition {
     pub const DURATION: f64 = 2.0;
     pub const ALL: &'static [Transition] = &[
-        Transition::None,
         Transition::Fade,
         Transition::SlideLeft,
         Transition::SlideRight,
@@ -96,7 +94,6 @@ impl Transition {
 
     pub fn ffmpeg_name(&self) -> &'static str {
         match self {
-            Self::None => "fade",
             Self::Fade => "fade",
             Self::SlideLeft => "slideleft",
             Self::SlideRight => "slideright",
@@ -126,6 +123,9 @@ pub struct VideoMetadata {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Timeline {
     pub title: String,
+    pub final_path: String,
+    pub video_path: String,
+    pub subtitle_path: String,
     pub clips: Vec<Clip>,
 }
 
@@ -149,10 +149,10 @@ pub struct Clip {
     pub audio_path: String,
     pub visual_path: String,
     pub video_path: String,
-    pub subtitle_path: String,
     pub start_time: f64,
     pub end_time: f64,
     pub duration: f64,
+    pub subtitle: String,
     pub acrossfade: f64,
     pub transition: Transition,
     pub motion: Motion,

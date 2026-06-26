@@ -64,7 +64,7 @@ impl Agent for WriterAgent {
             TRANSITION MUST BE ONE OF:
             {}
 
-            POSITION MUST BE ONE OF:
+            ACTOR POSITION MUST BE ONE OF:
             {}
 
             Motion guidelines:
@@ -92,32 +92,27 @@ impl Agent for WriterAgent {
             9. Camera movement should be simple and realistic.
             10. No Chinese elements.
             11. Use {} context only.
-            12. Never invent new motion names.
-            13. Never invent new transition names.
-            14. Do NOT include duration.
-            15. Do NOT include transitions.
-            16. Do NOT include explanations.
 
             Return STRICT JSON ONLY:
             {{
-                "title": "string",
+                "title": "...",
                 "characters": [
                     {{
-                        "name": "string",
-                        "appearance": "string",
-                        "voice": "string"
+                        "name": "...",
+                        "appearance": "...",
+                        "voice": "..."
                     }}
                 ],
                 "shots": [
                     {{
                         "shot_id": 1,
-                        "transition": "string",
-                        "motion": "string",
+                        "transition": "...",
+                        "motion": "...",
                         "environment":
                             {{
-                                "location": "string",
-                                "time_of_day": "string",
-                                "weather": "string"
+                                "location": "...",
+                                "time_of_day": "...",
+                                "weather": "..."
                             }},
                         "camera":
                             {{
@@ -128,16 +123,16 @@ impl Agent for WriterAgent {
                         "visual_prompt": "string,
                         "actors": [
                             {{
-                                "character": "string",
-                                "position": "left | center | right",
-                                "action": "string",
-                                "emotion": "string"
+                                "character": "...",
+                                "position": "...",
+                                "action": "...",
+                                "emotion": "..."
                             }}
                         ],
                         "dialogues": [
                             {{
-                                "character": "string",
-                                "text": "string"
+                                "character": "...",
+                                "text": "..."
                             }}
                         ]
                     }}

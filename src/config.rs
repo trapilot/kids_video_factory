@@ -8,6 +8,7 @@ pub struct Config {
     pub diffusion: DiffusionParams,
     pub feature: FeatureConfig,
     pub workflow_per_day: i64,
+    // pub workflow_gap_minutes: i64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -48,6 +49,7 @@ pub struct FeatureConfig {
 pub fn build_config() -> Config {
     Config {
         workflow_per_day: 3,
+        // workflow_gap_minutes: 15,
         movie: MovieConfig {
             language: "English".to_string(),
             country: "Vietnam".to_string(),

@@ -44,14 +44,14 @@ impl WorkflowEngine {
         registry.insert(
             agent::AgentType::Planner,
             AgentEntry {
-                pool: agent::AgentPool::new(1),
+                pool: agent::AgentPool::new(10),
                 agent: Arc::new(agents::PlannerAgent),
             },
         );
         registry.insert(
             agent::AgentType::Writer,
             AgentEntry {
-                pool: agent::AgentPool::new(1),
+                pool: agent::AgentPool::new(2),
                 agent: Arc::new(agents::WriterAgent),
             },
         );
@@ -72,7 +72,7 @@ impl WorkflowEngine {
         registry.insert(
             agent::AgentType::Publisher,
             AgentEntry {
-                pool: agent::AgentPool::new(1),
+                pool: agent::AgentPool::new(2),
                 agent: Arc::new(agents::PublisherAgent),
             },
         );
